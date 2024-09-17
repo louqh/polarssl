@@ -1,42 +1,41 @@
-add_executable(dh_client dh_client.c)
-target_link_libraries(dh_client polarssl)
+set(executables_mbedtls
+    dh_client
+    dh_server
+)
 
-add_executable(dh_genprime dh_genprime.c)
-target_link_libraries(dh_genprime polarssl)
+foreach(exe IN LISTS executables_mbedtls)
+    add_executable(${exe} ${exe}.c $<TARGET_OBJECTS:mbedtls_test>)
+    target_link_libraries(${exe} ${mbedtls_target} ${CMAKE_THREAD_LIBS_INIT})
+    target_include_directories(${exe} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/include)
+endforeach()
 
-add_executable(dh_server dh_server.c)
-target_link_libraries(dh_server polarssl)
+set(executables_mbedcrypto
+    dh_genprime
+    ecdh_curve25519
+    ecdsa
+    gen_key
+    key_app
+    key_app_writer
+    mpi_demo
+    pk_encrypt
+    pk_decrypt
+    pk_sign
+    pk_verify
+    rsa_decrypt
+    rsa_encrypt
+    rsa_genkey
+    rsa_sign
+    rsa_sign_pss
+    rsa_verify
+    rsa_verify_pss
+)
 
-add_executable(key_app key_app.c)
-target_link_libraries(key_app polarssl)
+foreach(exe IN LISTS executables_mbedcrypto)
+    add_executable(${exe} ${exe}.c $<TARGET_OBJECTS:mbedtls_test>)
+    target_link_libraries(${exe} ${mbedcrypto_target} ${CMAKE_THREAD_LIBS_INIT})
+    target_include_directories(${exe} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/include)
+endforeach()
 
-add_executable(key_app_writer key_app_writer.c)
-target_link_libraries(key_app_writer polarssl)
-
-add_executable(mpi_demo mpi_demo.c)
-target_link_libraries(mpi_demo polarssl)
-
-add_executable(rsa_genkey rsa_genkey.c)
-target_link_libraries(rsa_genkey polarssl)
-
-add_executable(rsa_sign rsa_sign.c)
-target_link_libraries(rsa_sign polarssl)
-
-add_executable(rsa_verify rsa_verify.c)
-target_link_libraries(rsa_verify polarssl)
-
-add_executable(rsa_sign_pss rsa_sign_pss.c)
-target_link_libraries(rsa_sign_pss polarssl)
-
-add_executable(rsa_verify_pss rsa_verify_pss.c)
-target_link_libraries(rsa_verify_pss polarssl)
-
-add_executable(rsa_encrypt rsa_encrypt.c)
-target_link_libraries(rsa_encrypt polarssl)
-
-add_executable(rsa_decrypt rsa_decrypt.c)
-target_link_libraries(rsa_decrypt polarssl)
-
-install(TARGETS dh_client dh_genprime dh_server key_app mpi_demo rsa_genkey rsa_sign rsa_verify rsa_encrypt rsa_decrypt
+install(TARGETS ${executables_mbedtls} ${executables_mbedcrypto}
         DESTINATION "bin"
         PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)

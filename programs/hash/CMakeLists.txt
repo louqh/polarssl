@@ -1,18 +1,15 @@
-add_executable(hello hello.c)
-target_link_libraries(hello polarssl)
+set(executables
+    generic_sum
+    hello
+    md_hmac_demo
+)
 
-add_executable(generic_sum generic_sum.c)
-target_link_libraries(generic_sum polarssl)
+foreach(exe IN LISTS executables)
+    add_executable(${exe} ${exe}.c $<TARGET_OBJECTS:mbedtls_test>)
+    target_link_libraries(${exe} ${mbedcrypto_target} ${CMAKE_THREAD_LIBS_INIT})
+    target_include_directories(${exe} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/include)
+endforeach()
 
-add_executable(md5sum md5sum.c)
-target_link_libraries(md5sum polarssl)
-
-add_executable(sha1sum sha1sum.c)
-target_link_libraries(sha1sum polarssl)
-
-add_executable(sha2sum sha2sum.c)
-target_link_libraries(sha2sum polarssl)
-
-install(TARGETS hello md5sum sha1sum sha2sum generic_sum
+install(TARGETS ${executables}
         DESTINATION "bin"
         PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)

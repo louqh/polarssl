@@ -1,41 +1,30 @@
 /*
  *  Portable interface to the CPU cycle counter
  *
- *  Copyright (C) 2006-2010, Brainspark B.V.
- *
- *  This file is part of PolarSSL (http://www.polarssl.org)
- *  Lead Maintainer: Paul Bakker <polarssl_maintainer at polarssl.org>
- *
- *  All rights reserved.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ *  Copyright The Mbed TLS Contributors
+ *  SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later
  */
 
-#include "polarssl/config.h"
+#include "common.h"
 
-#if defined(POLARSSL_TIMING_C)
+#if defined(MBEDTLS_TIMING_C)
 
-#include "polarssl/timing.h"
+#include "mbedtls/timing.h"
 
-#if defined(_WIN32)
+#if !defined(MBEDTLS_TIMING_ALT)
+
+#if !defined(unix) && !defined(__unix__) && !defined(__unix) && \
+    !defined(__APPLE__) && !defined(_WIN32) && !defined(__QNXNTO__) && \
+    !defined(__HAIKU__) && !defined(__midipix__)
+#error "This module only works on Unix and Windows, see MBEDTLS_TIMING_C in mbedtls_config.h"
+#endif
+
+#if defined(_WIN32) && !defined(EFIX64) && !defined(EFI32)
 
 #include <windows.h>
-#include <winbase.h>
+#include <process.h>
 
-struct _hr_time
-{
+struct _hr_time {
     LARGE_INTEGER start;
 };
 
@@ -43,270 +32,123 @@ struct _hr_time
 
 #include <unistd.h>
 #include <sys/types.h>
-#include <sys/time.h>
 #include <signal.h>
+/* time.h should be included independently of MBEDTLS_HAVE_TIME. If the
+ * platform matches the ifdefs above, it will be used. */
 #include <time.h>
-
-struct _hr_time
-{
+#include <sys/time.h>
+struct _hr_time {
     struct timeval start;
 };
+#endif /* _WIN32 && !EFIX64 && !EFI32 */
 
-#endif
+/**
+ * \brief          Return the elapsed time in milliseconds
+ *
+ * \warning        May change without notice
+ *
+ * \param val      points to a timer structure
+ * \param reset    If 0, query the elapsed time. Otherwise (re)start the timer.
+ *
+ * \return         Elapsed time since the previous reset in ms. When
+ *                 restarting, this is always 0.
+ *
+ * \note           To initialize a timer, call this function with reset=1.
+ *
+ *                 Determining the elapsed time and resetting the timer is not
+ *                 atomic on all platforms, so after the sequence
+ *                 `{ get_timer(1); ...; time1 = get_timer(1); ...; time2 =
+ *                 get_timer(0) }` the value time1+time2 is only approximately
+ *                 the delay since the first reset.
+ */
+#if defined(_WIN32) && !defined(EFIX64) && !defined(EFI32)
 
-#if !defined(POLARSSL_HAVE_HARDCLOCK) && defined(POLARSSL_HAVE_ASM) &&  \
-	(defined(_MSC_VER) && defined(_M_IX86)) || defined(__WATCOMC__)
-
-#define POLARSSL_HAVE_HARDCLOCK
-
-unsigned long hardclock( void )
+unsigned long mbedtls_timing_get_timer(struct mbedtls_timing_hr_time *val, int reset)
 {
-    unsigned long tsc;
-    __asm   rdtsc
-    __asm   mov  [tsc], eax
-    return( tsc );
-}
-#endif
-
-#if !defined(POLARSSL_HAVE_HARDCLOCK) && defined(POLARSSL_HAVE_ASM) &&  \
-    defined(__GNUC__) && defined(__i386__)
-
-#define POLARSSL_HAVE_HARDCLOCK
-
-unsigned long hardclock( void )
-{
-    unsigned long lo, hi;
-    asm( "rdtsc" : "=a" (lo), "=d" (hi) );
-    return( lo );
-}
-#endif
-
-#if !defined(POLARSSL_HAVE_HARDCLOCK) && defined(POLARSSL_HAVE_ASM) &&  \
-    defined(__GNUC__) && (defined(__amd64__) || defined(__x86_64__))
-
-#define POLARSSL_HAVE_HARDCLOCK
-
-unsigned long hardclock( void )
-{
-    unsigned long lo, hi;
-    asm( "rdtsc" : "=a" (lo), "=d" (hi) ); 
-    return( lo | (hi << 32) );
-}
-#endif
-
-#if !defined(POLARSSL_HAVE_HARDCLOCK) && defined(POLARSSL_HAVE_ASM) &&  \
-    defined(__GNUC__) && (defined(__powerpc__) || defined(__ppc__))
-
-#define POLARSSL_HAVE_HARDCLOCK
-
-unsigned long hardclock( void )
-{
-    unsigned long tbl, tbu0, tbu1;
-
-    do
-    {
-        asm( "mftbu %0" : "=r" (tbu0) );
-        asm( "mftb  %0" : "=r" (tbl ) );
-        asm( "mftbu %0" : "=r" (tbu1) );
-    }
-    while( tbu0 != tbu1 );
-
-    return( tbl );
-}
-#endif
-
-#if !defined(POLARSSL_HAVE_HARDCLOCK) && defined(POLARSSL_HAVE_ASM) &&  \
-    defined(__GNUC__) && defined(__sparc64__)
-
-#if defined(__OpenBSD__)
-#warning OpenBSD does not allow access to tick register using software version instead
-#else
-#define POLARSSL_HAVE_HARDCLOCK
-
-unsigned long hardclock( void )
-{
-    unsigned long tick;
-    asm( "rdpr %%tick, %0;" : "=&r" (tick) );
-    return( tick );
-}
-#endif
-#endif
-
-#if !defined(POLARSSL_HAVE_HARDCLOCK) && defined(POLARSSL_HAVE_ASM) &&  \
-    defined(__GNUC__) && defined(__sparc__) && !defined(__sparc64__)
-
-#define POLARSSL_HAVE_HARDCLOCK
-
-unsigned long hardclock( void )
-{
-    unsigned long tick;
-    asm( ".byte 0x83, 0x41, 0x00, 0x00" );
-    asm( "mov   %%g1, %0" : "=r" (tick) );
-    return( tick );
-}
-#endif
-
-#if !defined(POLARSSL_HAVE_HARDCLOCK) && defined(POLARSSL_HAVE_ASM) &&      \
-    defined(__GNUC__) && defined(__alpha__)
-
-#define POLARSSL_HAVE_HARDCLOCK
-
-unsigned long hardclock( void )
-{
-    unsigned long cc;
-    asm( "rpcc %0" : "=r" (cc) );
-    return( cc & 0xFFFFFFFF );
-}
-#endif
-
-#if !defined(POLARSSL_HAVE_HARDCLOCK) && defined(POLARSSL_HAVE_ASM) &&      \
-    defined(__GNUC__) && defined(__ia64__)
-
-#define POLARSSL_HAVE_HARDCLOCK
-
-unsigned long hardclock( void )
-{
-    unsigned long itc;
-    asm( "mov %0 = ar.itc" : "=r" (itc) );
-    return( itc );
-}
-#endif
-
-#if !defined(POLARSSL_HAVE_HARDCLOCK) && defined(_MSC_VER)
-
-#define POLARSSL_HAVE_HARDCLOCK
-
-unsigned long hardclock( void )
-{
-    LARGE_INTEGER offset;
-    
-	QueryPerformanceCounter( &offset );
-
-	return (unsigned long)( offset.QuadPart );
-}
-#endif
-
-#if !defined(POLARSSL_HAVE_HARDCLOCK)
-
-#define POLARSSL_HAVE_HARDCLOCK
-
-static int hardclock_init = 0;
-static struct timeval tv_init;
-
-unsigned long hardclock( void )
-{
-    struct timeval tv_cur;
-
-    if( hardclock_init == 0 )
-    {
-        gettimeofday( &tv_init, NULL );
-        hardclock_init = 1;
-    }
-
-    gettimeofday( &tv_cur, NULL );
-    return( ( tv_cur.tv_sec  - tv_init.tv_sec  ) * 1000000
-          + ( tv_cur.tv_usec - tv_init.tv_usec ) );
-}
-#endif
-
-volatile int alarmed = 0;
-
-#if defined(_WIN32)
-
-unsigned long get_timer( struct hr_time *val, int reset )
-{
-    unsigned long delta;
-    LARGE_INTEGER offset, hfreq;
     struct _hr_time *t = (struct _hr_time *) val;
 
-    QueryPerformanceCounter(  &offset );
-    QueryPerformanceFrequency( &hfreq );
-
-    delta = (unsigned long)( ( 1000 *
-        ( offset.QuadPart - t->start.QuadPart ) ) /
-           hfreq.QuadPart );
-
-    if( reset )
-        QueryPerformanceCounter( &t->start );
-
-    return( delta );
+    if (reset) {
+        QueryPerformanceCounter(&t->start);
+        return 0;
+    } else {
+        unsigned long delta;
+        LARGE_INTEGER now, hfreq;
+        QueryPerformanceCounter(&now);
+        QueryPerformanceFrequency(&hfreq);
+        delta = (unsigned long) ((now.QuadPart - t->start.QuadPart) * 1000ul
+                                 / hfreq.QuadPart);
+        return delta;
+    }
 }
 
-DWORD WINAPI TimerProc( LPVOID uElapse )
-{   
-    Sleep( (DWORD) uElapse );
-    alarmed = 1; 
-    return( TRUE );
-}
+#else /* _WIN32 && !EFIX64 && !EFI32 */
 
-void set_alarm( int seconds )
-{   
-    DWORD ThreadId;
-
-    alarmed = 0; 
-    CloseHandle( CreateThread( NULL, 0, TimerProc,
-        (LPVOID) ( seconds * 1000 ), 0, &ThreadId ) );
-}
-
-void m_sleep( int milliseconds )
+unsigned long mbedtls_timing_get_timer(struct mbedtls_timing_hr_time *val, int reset)
 {
-    Sleep( milliseconds );
-}
-
-#else
-
-unsigned long get_timer( struct hr_time *val, int reset )
-{
-    unsigned long delta;
-    struct timeval offset;
     struct _hr_time *t = (struct _hr_time *) val;
 
-    gettimeofday( &offset, NULL );
+    if (reset) {
+        gettimeofday(&t->start, NULL);
+        return 0;
+    } else {
+        unsigned long delta;
+        struct timeval now;
+        gettimeofday(&now, NULL);
+        delta = (now.tv_sec  - t->start.tv_sec) * 1000ul
+                + (now.tv_usec - t->start.tv_usec) / 1000;
+        return delta;
+    }
+}
 
-    delta = ( offset.tv_sec  - t->start.tv_sec  ) * 1000
-          + ( offset.tv_usec - t->start.tv_usec ) / 1000;
+#endif /* _WIN32 && !EFIX64 && !EFI32 */
 
-    if( reset )
-    {
-        t->start.tv_sec  = offset.tv_sec;
-        t->start.tv_usec = offset.tv_usec;
+/*
+ * Set delays to watch
+ */
+void mbedtls_timing_set_delay(void *data, uint32_t int_ms, uint32_t fin_ms)
+{
+    mbedtls_timing_delay_context *ctx = (mbedtls_timing_delay_context *) data;
+
+    ctx->int_ms = int_ms;
+    ctx->fin_ms = fin_ms;
+
+    if (fin_ms != 0) {
+        (void) mbedtls_timing_get_timer(&ctx->timer, 1);
+    }
+}
+
+/*
+ * Get number of delays expired
+ */
+int mbedtls_timing_get_delay(void *data)
+{
+    mbedtls_timing_delay_context *ctx = (mbedtls_timing_delay_context *) data;
+    unsigned long elapsed_ms;
+
+    if (ctx->fin_ms == 0) {
+        return -1;
     }
 
-    return( delta );
+    elapsed_ms = mbedtls_timing_get_timer(&ctx->timer, 0);
+
+    if (elapsed_ms >= ctx->fin_ms) {
+        return 2;
+    }
+
+    if (elapsed_ms >= ctx->int_ms) {
+        return 1;
+    }
+
+    return 0;
 }
 
-#if defined(INTEGRITY)
-void m_sleep( int milliseconds )
+/*
+ * Get the final delay.
+ */
+uint32_t mbedtls_timing_get_final_delay(
+    const mbedtls_timing_delay_context *data)
 {
-    usleep( milliseconds * 1000 );
+    return data->fin_ms;
 }
-
-#else
-
-static void sighandler( int signum )
-{   
-    alarmed = 1;
-    signal( signum, sighandler );
-}
-
-void set_alarm( int seconds )
-{
-    alarmed = 0;
-    signal( SIGALRM, sighandler );
-    alarm( seconds );
-}
-
-void m_sleep( int milliseconds )
-{
-    struct timeval tv;
-
-    tv.tv_sec  = milliseconds / 1000;
-    tv.tv_usec = milliseconds * 1000;
-
-    select( 0, NULL, NULL, NULL, &tv );
-}
-#endif /* INTEGRITY */
-
-#endif
-
-#endif
+#endif /* !MBEDTLS_TIMING_ALT */
+#endif /* MBEDTLS_TIMING_C */

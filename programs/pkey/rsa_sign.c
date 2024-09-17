@@ -1,160 +1,155 @@
 /*
- *  RSA/SHA-1 signature creation program
+ *  RSA/SHA-256 signature creation program
  *
- *  Copyright (C) 2006-2011, Brainspark B.V.
- *
- *  This file is part of PolarSSL (http://www.polarssl.org)
- *  Lead Maintainer: Paul Bakker <polarssl_maintainer at polarssl.org>
- *
- *  All rights reserved.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ *  Copyright The Mbed TLS Contributors
+ *  SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later
  */
 
-#ifndef _CRT_SECURE_NO_DEPRECATE
-#define _CRT_SECURE_NO_DEPRECATE 1
-#endif
+#include "mbedtls/build_info.h"
 
-#include <string.h>
-#include <stdio.h>
+#include "mbedtls/platform.h"
+/* md.h is included this early since MD_CAN_XXX macros are defined there. */
+#include "mbedtls/md.h"
 
-#include "polarssl/config.h"
-
-#include "polarssl/rsa.h"
-#include "polarssl/sha1.h"
-
-#if !defined(POLARSSL_BIGNUM_C) || !defined(POLARSSL_RSA_C) ||  \
-    !defined(POLARSSL_SHA1_C) || !defined(POLARSSL_FS_IO)
-int main( int argc, char *argv[] )
+#if !defined(MBEDTLS_BIGNUM_C) || !defined(MBEDTLS_RSA_C) ||  \
+    !defined(MBEDTLS_MD_CAN_SHA256) || !defined(MBEDTLS_MD_C) || \
+    !defined(MBEDTLS_FS_IO)
+int main(void)
 {
-    ((void) argc);
-    ((void) argv);
-
-    printf("POLARSSL_BIGNUM_C and/or POLARSSL_RSA_C and/or "
-           "POLARSSL_SHA1_C and/or POLARSSL_FS_IO not defined.\n");
-    return( 0 );
+    mbedtls_printf("MBEDTLS_BIGNUM_C and/or MBEDTLS_RSA_C and/or "
+                   "MBEDTLS_MD_C and/or "
+                   "MBEDTLS_MD_CAN_SHA256 and/or MBEDTLS_FS_IO not defined.\n");
+    mbedtls_exit(0);
 }
 #else
-int main( int argc, char *argv[] )
+
+#include "mbedtls/rsa.h"
+
+#include <stdio.h>
+#include <string.h>
+
+
+int main(int argc, char *argv[])
 {
     FILE *f;
-    int ret;
+    int ret = 1;
+    int exit_code = MBEDTLS_EXIT_FAILURE;
     size_t i;
-    rsa_context rsa;
-    unsigned char hash[20];
-    unsigned char buf[POLARSSL_MPI_MAX_SIZE];
+    mbedtls_rsa_context rsa;
+    unsigned char hash[32];
+    unsigned char buf[MBEDTLS_MPI_MAX_SIZE];
+    char filename[512];
+    mbedtls_mpi N, P, Q, D, E, DP, DQ, QP;
 
-    ret = 1;
+    mbedtls_rsa_init(&rsa);
 
-    if( argc != 2 )
-    {
-        printf( "usage: rsa_sign <filename>\n" );
+    mbedtls_mpi_init(&N); mbedtls_mpi_init(&P); mbedtls_mpi_init(&Q);
+    mbedtls_mpi_init(&D); mbedtls_mpi_init(&E); mbedtls_mpi_init(&DP);
+    mbedtls_mpi_init(&DQ); mbedtls_mpi_init(&QP);
+
+    if (argc != 2) {
+        mbedtls_printf("usage: rsa_sign <filename>\n");
 
 #if defined(_WIN32)
-        printf( "\n" );
+        mbedtls_printf("\n");
 #endif
 
         goto exit;
     }
 
-    printf( "\n  . Reading private key from rsa_priv.txt" );
-    fflush( stdout );
+    mbedtls_printf("\n  . Reading private key from rsa_priv.txt");
+    fflush(stdout);
 
-    if( ( f = fopen( "rsa_priv.txt", "rb" ) ) == NULL )
-    {
-        ret = 1;
-        printf( " failed\n  ! Could not open rsa_priv.txt\n" \
-                "  ! Please run rsa_genkey first\n\n" );
+    if ((f = fopen("rsa_priv.txt", "rb")) == NULL) {
+        mbedtls_printf(" failed\n  ! Could not open rsa_priv.txt\n" \
+                       "  ! Please run rsa_genkey first\n\n");
         goto exit;
     }
 
-    rsa_init( &rsa, RSA_PKCS_V15, 0 );
-    
-    if( ( ret = mpi_read_file( &rsa.N , 16, f ) ) != 0 ||
-        ( ret = mpi_read_file( &rsa.E , 16, f ) ) != 0 ||
-        ( ret = mpi_read_file( &rsa.D , 16, f ) ) != 0 ||
-        ( ret = mpi_read_file( &rsa.P , 16, f ) ) != 0 ||
-        ( ret = mpi_read_file( &rsa.Q , 16, f ) ) != 0 ||
-        ( ret = mpi_read_file( &rsa.DP, 16, f ) ) != 0 ||
-        ( ret = mpi_read_file( &rsa.DQ, 16, f ) ) != 0 ||
-        ( ret = mpi_read_file( &rsa.QP, 16, f ) ) != 0 )
-    {
-        printf( " failed\n  ! mpi_read_file returned %d\n\n", ret );
+    if ((ret = mbedtls_mpi_read_file(&N, 16, f)) != 0 ||
+        (ret = mbedtls_mpi_read_file(&E, 16, f)) != 0 ||
+        (ret = mbedtls_mpi_read_file(&D, 16, f)) != 0 ||
+        (ret = mbedtls_mpi_read_file(&P, 16, f)) != 0 ||
+        (ret = mbedtls_mpi_read_file(&Q, 16, f)) != 0 ||
+        (ret = mbedtls_mpi_read_file(&DP, 16, f)) != 0 ||
+        (ret = mbedtls_mpi_read_file(&DQ, 16, f)) != 0 ||
+        (ret = mbedtls_mpi_read_file(&QP, 16, f)) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_mpi_read_file returned %d\n\n", ret);
+        fclose(f);
+        goto exit;
+    }
+    fclose(f);
+
+    if ((ret = mbedtls_rsa_import(&rsa, &N, &P, &Q, &D, &E)) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_rsa_import returned %d\n\n",
+                       ret);
         goto exit;
     }
 
-    rsa.len = ( mpi_msb( &rsa.N ) + 7 ) >> 3;
+    if ((ret = mbedtls_rsa_complete(&rsa)) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_rsa_complete returned %d\n\n",
+                       ret);
+        goto exit;
+    }
 
-    fclose( f );
-
-    printf( "\n  . Checking the private key" );
-    fflush( stdout );
-    if( ( ret = rsa_check_privkey( &rsa ) ) != 0 )
-    {
-        printf( " failed\n  ! rsa_check_privkey failed with -0x%0x\n", -ret );
+    mbedtls_printf("\n  . Checking the private key");
+    fflush(stdout);
+    if ((ret = mbedtls_rsa_check_privkey(&rsa)) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_rsa_check_privkey failed with -0x%0x\n",
+                       (unsigned int) -ret);
         goto exit;
     }
 
     /*
-     * Compute the SHA-1 hash of the input file,
+     * Compute the SHA-256 hash of the input file,
      * then calculate the RSA signature of the hash.
      */
-    printf( "\n  . Generating the RSA/SHA-1 signature" );
-    fflush( stdout );
+    mbedtls_printf("\n  . Generating the RSA/SHA-256 signature");
+    fflush(stdout);
 
-    if( ( ret = sha1_file( argv[1], hash ) ) != 0 )
-    {
-        printf( " failed\n  ! Could not open or read %s\n\n", argv[1] );
+    if ((ret = mbedtls_md_file(
+             mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),
+             argv[1], hash)) != 0) {
+        mbedtls_printf(" failed\n  ! Could not open or read %s\n\n", argv[1]);
         goto exit;
     }
 
-    if( ( ret = rsa_pkcs1_sign( &rsa, NULL, NULL, RSA_PRIVATE, SIG_RSA_SHA1,
-                                20, hash, buf ) ) != 0 )
-    {
-        printf( " failed\n  ! rsa_pkcs1_sign returned -0x%0x\n\n", -ret );
+    if ((ret = mbedtls_rsa_pkcs1_sign(&rsa, NULL, NULL, MBEDTLS_MD_SHA256,
+                                      32, hash, buf)) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_rsa_pkcs1_sign returned -0x%0x\n\n",
+                       (unsigned int) -ret);
         goto exit;
     }
 
     /*
-     * Write the signature into <filename>-sig.txt
+     * Write the signature into <filename>.sig
      */
-    memcpy( argv[1] + strlen( argv[1] ), ".sig", 5 );
+    mbedtls_snprintf(filename, sizeof(filename), "%s.sig", argv[1]);
 
-    if( ( f = fopen( argv[1], "wb+" ) ) == NULL )
-    {
-        ret = 1;
-        printf( " failed\n  ! Could not create %s\n\n", argv[1] );
+    if ((f = fopen(filename, "wb+")) == NULL) {
+        mbedtls_printf(" failed\n  ! Could not create %s\n\n", argv[1]);
         goto exit;
     }
 
-    for( i = 0; i < rsa.len; i++ )
-        fprintf( f, "%02X%s", buf[i],
-                 ( i + 1 ) % 16 == 0 ? "\r\n" : " " );
+    for (i = 0; i < mbedtls_rsa_get_len(&rsa); i++) {
+        mbedtls_fprintf(f, "%02X%s", buf[i],
+                        (i + 1) % 16 == 0 ? "\r\n" : " ");
+    }
 
-    fclose( f );
+    fclose(f);
 
-    printf( "\n  . Done (created \"%s\")\n\n", argv[1] );
+    mbedtls_printf("\n  . Done (created \"%s\")\n\n", filename);
+
+    exit_code = MBEDTLS_EXIT_SUCCESS;
 
 exit:
 
-#if defined(_WIN32)
-    printf( "  + Press Enter to exit this program.\n" );
-    fflush( stdout ); getchar();
-#endif
+    mbedtls_rsa_free(&rsa);
+    mbedtls_mpi_free(&N); mbedtls_mpi_free(&P); mbedtls_mpi_free(&Q);
+    mbedtls_mpi_free(&D); mbedtls_mpi_free(&E); mbedtls_mpi_free(&DP);
+    mbedtls_mpi_free(&DQ); mbedtls_mpi_free(&QP);
 
-    return( ret );
+    mbedtls_exit(exit_code);
 }
-#endif /* POLARSSL_BIGNUM_C && POLARSSL_RSA_C && POLARSSL_SHA1_C &&
-          POLARSSL_FS_IO */
+#endif /* MBEDTLS_BIGNUM_C && MBEDTLS_RSA_C && MBEDTLS_MD_CAN_SHA256 &&
+          MBEDTLS_FS_IO */

@@ -1,117 +1,107 @@
 /**
  *  \brief Use and generate random data into a file via the CTR_DBRG based on AES
  *
- *  Copyright (C) 2006-2011, Brainspark B.V.
- *
- *  This file is part of PolarSSL (http://www.polarssl.org)
- *  Lead Maintainer: Paul Bakker <polarssl_maintainer at polarssl.org>
- *
- *  All rights reserved.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ *  Copyright The Mbed TLS Contributors
+ *  SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later
  */
 
-#include "polarssl/config.h"
+#include "mbedtls/build_info.h"
 
-#include "polarssl/entropy.h"
-#include "polarssl/ctr_drbg.h"
+#include "mbedtls/platform.h"
+
+#if defined(MBEDTLS_CTR_DRBG_C) && defined(MBEDTLS_ENTROPY_C) && \
+    defined(MBEDTLS_FS_IO)
+#include "mbedtls/entropy.h"
+#include "mbedtls/ctr_drbg.h"
 
 #include <stdio.h>
+#endif
 
-#if !defined(POLARSSL_CTR_DRBG_C) || !defined(POLARSSL_ENTROPY_C)
-int main( int argc, char *argv[] )
+#if !defined(MBEDTLS_CTR_DRBG_C) || !defined(MBEDTLS_ENTROPY_C) || \
+    !defined(MBEDTLS_FS_IO)
+int main(void)
 {
-    ((void) argc);
-    ((void) argv);
-
-    printf("POLARSSL_CTR_DRBG_C or POLARSSL_ENTROPY_C not defined.\n");
-    return( 0 );
+    mbedtls_printf("MBEDTLS_CTR_DRBG_C and/or MBEDTLS_ENTROPY_C and/or MBEDTLS_FS_IO not defined.\n");
+    mbedtls_exit(0);
 }
 #else
-int main( int argc, char *argv[] )
+
+
+int main(int argc, char *argv[])
 {
     FILE *f;
-    int i, k, ret;
-    ctr_drbg_context ctr_drbg;
-    entropy_context entropy;
+    int i, k, ret = 1;
+    int exit_code = MBEDTLS_EXIT_FAILURE;
+    mbedtls_ctr_drbg_context ctr_drbg;
+    mbedtls_entropy_context entropy;
     unsigned char buf[1024];
 
-    if( argc < 2 )
-    {
-        fprintf( stderr, "usage: %s <output filename>\n", argv[0] );
-        return( 1 );
+    mbedtls_ctr_drbg_init(&ctr_drbg);
+
+    if (argc < 2) {
+        mbedtls_fprintf(stderr, "usage: %s <output filename>\n", argv[0]);
+        mbedtls_exit(exit_code);
     }
 
-    if( ( f = fopen( argv[1], "wb+" ) ) == NULL )
-    {
-        printf( "failed to open '%s' for writing.\n", argv[0] );
-        return( 1 );
+    if ((f = fopen(argv[1], "wb+")) == NULL) {
+        mbedtls_printf("failed to open '%s' for writing.\n", argv[1]);
+        mbedtls_exit(exit_code);
     }
 
-    entropy_init( &entropy );
-    ret = ctr_drbg_init( &ctr_drbg, entropy_func, &entropy, (unsigned char *) "RANDOM_GEN", 10 );
-    if( ret != 0 )
-    {
-        printf( "failed in ctr_drbg_init: %d\n", ret );
+    mbedtls_entropy_init(&entropy);
+    ret = mbedtls_ctr_drbg_seed(&ctr_drbg,
+                                mbedtls_entropy_func,
+                                &entropy,
+                                (const unsigned char *) "RANDOM_GEN",
+                                10);
+    if (ret != 0) {
+        mbedtls_printf("failed in mbedtls_ctr_drbg_seed: %d\n", ret);
         goto cleanup;
     }
-    ctr_drbg_set_prediction_resistance( &ctr_drbg, CTR_DRBG_PR_OFF );
+    mbedtls_ctr_drbg_set_prediction_resistance(&ctr_drbg, MBEDTLS_CTR_DRBG_PR_OFF);
 
-#if defined(POLARSSL_FS_IO)
-    ret = ctr_drbg_update_seed_file( &ctr_drbg, "seedfile" );
+#if defined(MBEDTLS_FS_IO)
+    ret = mbedtls_ctr_drbg_update_seed_file(&ctr_drbg, "seedfile");
 
-    if( ret == POLARSSL_ERR_CTR_DRBG_FILE_IO_ERROR )
-    {
-        printf( "Failed to open seedfile. Generating one.\n" );
-        ret = ctr_drbg_write_seed_file( &ctr_drbg, "seedfile" );
-        if( ret != 0 )
-        {
-            printf( "failed in ctr_drbg_write_seed_file: %d\n", ret );
+    if (ret == MBEDTLS_ERR_CTR_DRBG_FILE_IO_ERROR) {
+        mbedtls_printf("Failed to open seedfile. Generating one.\n");
+        ret = mbedtls_ctr_drbg_write_seed_file(&ctr_drbg, "seedfile");
+        if (ret != 0) {
+            mbedtls_printf("failed in mbedtls_ctr_drbg_write_seed_file: %d\n", ret);
             goto cleanup;
         }
-    }
-    else if( ret != 0 )
-    {
-        printf( "failed in ctr_drbg_update_seed_file: %d\n", ret );
+    } else if (ret != 0) {
+        mbedtls_printf("failed in mbedtls_ctr_drbg_update_seed_file: %d\n", ret);
         goto cleanup;
     }
 #endif
 
-    for( i = 0, k = 768; i < k; i++ )
-    {
-        ret = ctr_drbg_random( &ctr_drbg, buf, sizeof( buf ) );
-        if( ret != 0 )
-        {
-            printf("failed!\n");
+    for (i = 0, k = 768; i < k; i++) {
+        ret = mbedtls_ctr_drbg_random(&ctr_drbg, buf, sizeof(buf));
+        if (ret != 0) {
+            mbedtls_printf("failed!\n");
             goto cleanup;
         }
 
-        fwrite( buf, 1, sizeof( buf ), f );
+        fwrite(buf, 1, sizeof(buf), f);
 
-        printf( "Generating 32Mb of data in file '%s'... %04.1f" \
-                "%% done\r", argv[1], (100 * (float) (i + 1)) / k );
-        fflush( stdout );
+        mbedtls_printf("Generating %ldkb of data in file '%s'... %04.1f" \
+                       "%% done\r",
+                       (long) (sizeof(buf) * k / 1024),
+                       argv[1],
+                       (100 * (float) (i + 1)) / k);
+        fflush(stdout);
     }
 
-    ret = 0;
+    exit_code = MBEDTLS_EXIT_SUCCESS;
 
 cleanup:
-    printf("\n");
+    mbedtls_printf("\n");
 
-    fclose( f );
+    fclose(f);
+    mbedtls_ctr_drbg_free(&ctr_drbg);
+    mbedtls_entropy_free(&entropy);
 
-    return( ret );
+    mbedtls_exit(exit_code);
 }
-#endif /* POLARSSL_CTR_DRBG_C && POLARSSL_ENTROPY_C */
+#endif /* MBEDTLS_CTR_DRBG_C && MBEDTLS_ENTROPY_C */

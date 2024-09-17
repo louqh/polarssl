@@ -1,285 +1,174 @@
 /*
- * X509 buffer writing functionality
+ *  X.509 internal, common functions for writing
  *
- *  Copyright (C) 2006-2012, Brainspark B.V.
- *
- *  This file is part of PolarSSL (http://www.polarssl.org)
- *  Lead Maintainer: Paul Bakker <polarssl_maintainer at polarssl.org>
- *
- *  All rights reserved.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ *  Copyright The Mbed TLS Contributors
+ *  SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later
  */
+#include "common.h"
+#if defined(MBEDTLS_X509_CSR_WRITE_C) || defined(MBEDTLS_X509_CRT_WRITE_C)
 
-#include "polarssl/config.h"
+#include "mbedtls/x509_crt.h"
+#include "x509_internal.h"
+#include "mbedtls/asn1write.h"
+#include "mbedtls/error.h"
+#include "mbedtls/oid.h"
+#include "mbedtls/platform.h"
+#include "mbedtls/platform_util.h"
 
-#if defined(POLARSSL_X509_WRITE_C)
+#include <string.h>
+#include <stdint.h>
 
-#include "polarssl/asn1write.h"
-#include "polarssl/x509write.h"
-#include "polarssl/x509.h"
-#include "polarssl/sha1.h"
-#include "polarssl/sha2.h"
-#include "polarssl/sha4.h"
-#include "polarssl/md4.h"
-#include "polarssl/md5.h"
+#if defined(MBEDTLS_PEM_WRITE_C)
+#include "mbedtls/pem.h"
+#endif /* MBEDTLS_PEM_WRITE_C */
 
-int x509_write_pubkey_der( unsigned char *buf, size_t size, rsa_context *rsa )
+#if defined(MBEDTLS_USE_PSA_CRYPTO)
+#include "psa/crypto.h"
+#include "mbedtls/psa_util.h"
+#include "md_psa.h"
+#endif /* MBEDTLS_USE_PSA_CRYPTO */
+
+#define CHECK_OVERFLOW_ADD(a, b) \
+    do                         \
+    {                           \
+        if (a > SIZE_MAX - (b)) \
+        { \
+            return MBEDTLS_ERR_X509_BAD_INPUT_DATA; \
+        }                            \
+        a += b; \
+    } while (0)
+
+int mbedtls_x509_write_set_san_common(mbedtls_asn1_named_data **extensions,
+                                      const mbedtls_x509_san_list *san_list)
 {
-    int ret;
-    unsigned char *c;
-    size_t len = 0;
+    int ret = 0;
+    const mbedtls_x509_san_list *cur;
+    unsigned char *buf;
+    unsigned char *p;
+    size_t len;
+    size_t buflen = 0;
 
-    c = buf + size - 1;
-
-    ASN1_CHK_ADD( len, asn1_write_mpi( &c, buf, &rsa->E ) );
-    ASN1_CHK_ADD( len, asn1_write_mpi( &c, buf, &rsa->N ) );
-
-    ASN1_CHK_ADD( len, asn1_write_len( &c, buf, len ) );
-    ASN1_CHK_ADD( len, asn1_write_tag( &c, buf, ASN1_CONSTRUCTED | ASN1_SEQUENCE ) );
-
-    if( c - buf < 1 )
-        return( POLARSSL_ERR_ASN1_BUF_TOO_SMALL );
-
-    *--c = 0;
-    len += 1;
-
-    ASN1_CHK_ADD( len, asn1_write_len( &c, buf, len ) );
-    ASN1_CHK_ADD( len, asn1_write_tag( &c, buf, ASN1_BIT_STRING ) );
-
-    ASN1_CHK_ADD( len, asn1_write_algorithm_identifier( &c, buf, OID_PKCS1_RSA ) );
-
-    ASN1_CHK_ADD( len, asn1_write_len( &c, buf, len ) );
-    ASN1_CHK_ADD( len, asn1_write_tag( &c, buf, ASN1_CONSTRUCTED | ASN1_SEQUENCE ) );
-
-    return( len );
-}
-
-int x509_write_key_der( unsigned char *buf, size_t size, rsa_context *rsa )
-{
-    int ret;
-    unsigned char *c;
-    size_t len = 0;
-
-    c = buf + size - 1;
-
-    ASN1_CHK_ADD( len, asn1_write_mpi( &c, buf, &rsa->QP ) );
-    ASN1_CHK_ADD( len, asn1_write_mpi( &c, buf, &rsa->DQ ) );
-    ASN1_CHK_ADD( len, asn1_write_mpi( &c, buf, &rsa->DP ) );
-    ASN1_CHK_ADD( len, asn1_write_mpi( &c, buf, &rsa->Q ) );
-    ASN1_CHK_ADD( len, asn1_write_mpi( &c, buf, &rsa->P ) );
-    ASN1_CHK_ADD( len, asn1_write_mpi( &c, buf, &rsa->D ) );
-    ASN1_CHK_ADD( len, asn1_write_mpi( &c, buf, &rsa->E ) );
-    ASN1_CHK_ADD( len, asn1_write_mpi( &c, buf, &rsa->N ) );
-    ASN1_CHK_ADD( len, asn1_write_int( &c, buf, 0 ) );
-
-    ASN1_CHK_ADD( len, asn1_write_len( &c, buf, len ) );
-    ASN1_CHK_ADD( len, asn1_write_tag( &c, buf, ASN1_CONSTRUCTED | ASN1_SEQUENCE ) );
-
-    // TODO: Make NON RSA Specific variant later on
-/*    *--c = 0;
-    len += 1;
-
-    len += asn1_write_len( &c, len);
-    len += asn1_write_tag( &c, ASN1_BIT_STRING );
-
-    len += asn1_write_oid( &c, OID_PKCS1_RSA );
-
-    len += asn1_write_int( &c, 0 );
-
-    len += asn1_write_len( &c, len);
-    len += asn1_write_tag( &c, ASN1_CONSTRUCTED | ASN1_SEQUENCE );*/
-
-/*    for(i = 0; i < len; ++i)
-    {
-        if (i % 16 == 0 ) printf("\n");
-        printf("%02x ", c[i]);
+    /* Determine the maximum size of the SubjectAltName list */
+    for (cur = san_list; cur != NULL; cur = cur->next) {
+        /* Calculate size of the required buffer */
+        switch (cur->node.type) {
+            case MBEDTLS_X509_SAN_DNS_NAME:
+            case MBEDTLS_X509_SAN_UNIFORM_RESOURCE_IDENTIFIER:
+            case MBEDTLS_X509_SAN_IP_ADDRESS:
+            case MBEDTLS_X509_SAN_RFC822_NAME:
+                /* length of value for each name entry,
+                 * maximum 4 bytes for the length field,
+                 * 1 byte for the tag/type.
+                 */
+                CHECK_OVERFLOW_ADD(buflen, cur->node.san.unstructured_name.len);
+                CHECK_OVERFLOW_ADD(buflen, 4 + 1);
+                break;
+            case MBEDTLS_X509_SAN_DIRECTORY_NAME:
+            {
+                const mbedtls_asn1_named_data *chunk = &cur->node.san.directory_name;
+                while (chunk != NULL) {
+                    // Max 4 bytes for length, +1 for tag,
+                    // additional 4 max for length, +1 for tag.
+                    // See x509_write_name for more information.
+                    CHECK_OVERFLOW_ADD(buflen, 4 + 1 + 4 + 1);
+                    CHECK_OVERFLOW_ADD(buflen, chunk->oid.len);
+                    CHECK_OVERFLOW_ADD(buflen, chunk->val.len);
+                    chunk = chunk->next;
+                }
+                CHECK_OVERFLOW_ADD(buflen, 4 + 1);
+                break;
+            }
+            default:
+                /* Not supported - return. */
+                return MBEDTLS_ERR_X509_FEATURE_UNAVAILABLE;
+        }
     }
-    printf("\n");*/
 
-    return( len );
-}
+    /* Add the extra length field and tag */
+    CHECK_OVERFLOW_ADD(buflen, 4 + 1);
 
-int x509_write_name( unsigned char **p, unsigned char *start, char *oid,
-                     char *name )
-{
-    int ret;
-    size_t string_len = 0;
-    size_t oid_len = 0;
-    size_t len = 0;
-
-    // Write PrintableString for all except OID_PKCS9_EMAIL
-    //
-    if( OID_SIZE( OID_PKCS9_EMAIL ) == strlen( oid ) &&
-        memcmp( oid, OID_PKCS9_EMAIL, strlen( oid ) ) == 0 )
-    {
-        ASN1_CHK_ADD( string_len, asn1_write_ia5_string( p, start, name ) );
+    /* Allocate buffer */
+    buf = mbedtls_calloc(1, buflen);
+    if (buf == NULL) {
+        return MBEDTLS_ERR_ASN1_ALLOC_FAILED;
     }
-    else
-        ASN1_CHK_ADD( string_len, asn1_write_printable_string( p, start, name ) );
+    p = buf + buflen;
 
-    // Write OID
-    //
-    ASN1_CHK_ADD( oid_len, asn1_write_oid( p, start, oid ) );
+    /* Write ASN.1-based structure */
+    cur = san_list;
+    len = 0;
+    while (cur != NULL) {
+        size_t single_san_len = 0;
+        switch (cur->node.type) {
+            case MBEDTLS_X509_SAN_DNS_NAME:
+            case MBEDTLS_X509_SAN_RFC822_NAME:
+            case MBEDTLS_X509_SAN_UNIFORM_RESOURCE_IDENTIFIER:
+            case MBEDTLS_X509_SAN_IP_ADDRESS:
+            {
+                const unsigned char *unstructured_name =
+                    (const unsigned char *) cur->node.san.unstructured_name.p;
+                size_t unstructured_name_len = cur->node.san.unstructured_name.len;
 
-    len = oid_len + string_len;
-    ASN1_CHK_ADD( len, asn1_write_len( p, start, oid_len + string_len ) );
-    ASN1_CHK_ADD( len, asn1_write_tag( p, start, ASN1_CONSTRUCTED | ASN1_SEQUENCE ) );
-
-    ASN1_CHK_ADD( len, asn1_write_len( p, start, len ) );
-    ASN1_CHK_ADD( len, asn1_write_tag( p, start, ASN1_CONSTRUCTED | ASN1_SET ) );
-
-    return( len );
-}
-
-/*
- * Wrapper for x509 hashes.
- */
-static void x509_hash( const unsigned char *in, size_t len, int alg,
-                       unsigned char *out )
-{
-    switch( alg )
-    {
-#if defined(POLARSSL_MD2_C)
-        case SIG_RSA_MD2    :  md2( in, len, out ); break;
-#endif
-#if defined(POLARSSL_MD4_C)
-        case SIG_RSA_MD4    :  md4( in, len, out ); break;
-#endif
-#if defined(POLARSSL_MD5_C)
-        case SIG_RSA_MD5    :  md5( in, len, out ); break;
-#endif
-#if defined(POLARSSL_SHA1_C)
-        case SIG_RSA_SHA1   : sha1( in, len, out ); break;
-#endif
-#if defined(POLARSSL_SHA2_C)
-        case SIG_RSA_SHA224 : sha2( in, len, out, 1 ); break;
-        case SIG_RSA_SHA256 : sha2( in, len, out, 0 ); break;
-#endif
-#if defined(POLARSSL_SHA4_C)
-        case SIG_RSA_SHA384 : sha4( in, len, out, 1 ); break;
-        case SIG_RSA_SHA512 : sha4( in, len, out, 0 ); break;
-#endif
-        default:
-            memset( out, '\xFF', 64 );
+                MBEDTLS_ASN1_CHK_CLEANUP_ADD(single_san_len,
+                                             mbedtls_asn1_write_raw_buffer(
+                                                 &p, buf,
+                                                 unstructured_name, unstructured_name_len));
+                MBEDTLS_ASN1_CHK_CLEANUP_ADD(single_san_len, mbedtls_asn1_write_len(
+                                                 &p, buf, unstructured_name_len));
+                MBEDTLS_ASN1_CHK_CLEANUP_ADD(single_san_len,
+                                             mbedtls_asn1_write_tag(
+                                                 &p, buf,
+                                                 MBEDTLS_ASN1_CONTEXT_SPECIFIC | cur->node.type));
+            }
             break;
-    }
-}
-
-int x509_write_sig( unsigned char **p, unsigned char *start, char *oid,
-                    unsigned char *sig, size_t size )
-{
-    int ret;
-    size_t len = 0;
-
-    if( *p - start < (int) size + 1 )
-        return( POLARSSL_ERR_ASN1_BUF_TOO_SMALL );
-
-    len = size;
-    (*p) -= len;
-    memcpy( *p, sig, len );
-
-    *--(*p) = 0;
-    len += 1;
-
-    ASN1_CHK_ADD( len, asn1_write_len( p, start, len ) );
-    ASN1_CHK_ADD( len, asn1_write_tag( p, start, ASN1_BIT_STRING ) );
-
-    // Write OID
-    //
-    ASN1_CHK_ADD( len, asn1_write_algorithm_identifier( p, start, oid ) );
-
-    return( len );
-}
-
-int x509_write_cert_req( unsigned char *buf, size_t size, rsa_context *rsa,
-                         x509_req_name *req_name, int hash_id )
-{
-    int ret;
-    char sig_oid[10];
-    unsigned char *c, *c2;
-    unsigned char hash[64];
-    unsigned char sig[POLARSSL_MPI_MAX_SIZE];
-    unsigned char tmp_buf[2048];
-    size_t sub_len = 0, pub_len = 0, sig_len = 0;
-    size_t len = 0;
-    x509_req_name *cur = req_name;
-
-    c = tmp_buf + 2048 - 1;
-
-    ASN1_CHK_ADD( len, asn1_write_len( &c, tmp_buf, 0 ) );
-    ASN1_CHK_ADD( len, asn1_write_tag( &c, tmp_buf, ASN1_CONSTRUCTED | ASN1_CONTEXT_SPECIFIC ) );
-
-    ASN1_CHK_ADD( pub_len, asn1_write_mpi( &c, tmp_buf, &rsa->E ) );
-    ASN1_CHK_ADD( pub_len, asn1_write_mpi( &c, tmp_buf, &rsa->N ) );
-
-    ASN1_CHK_ADD( pub_len, asn1_write_len( &c, tmp_buf, pub_len ) );
-    ASN1_CHK_ADD( pub_len, asn1_write_tag( &c, tmp_buf, ASN1_CONSTRUCTED | ASN1_SEQUENCE ) );
-
-    if( c - tmp_buf < 1 )
-        return( POLARSSL_ERR_ASN1_BUF_TOO_SMALL );
-
-    *--c = 0;
-    pub_len += 1;
-
-    ASN1_CHK_ADD( pub_len, asn1_write_len( &c, tmp_buf, pub_len ) );
-    ASN1_CHK_ADD( pub_len, asn1_write_tag( &c, tmp_buf, ASN1_BIT_STRING ) );
-
-    ASN1_CHK_ADD( pub_len, asn1_write_algorithm_identifier( &c, tmp_buf, OID_PKCS1_RSA ) );
-
-    len += pub_len;
-    ASN1_CHK_ADD( len, asn1_write_len( &c, tmp_buf, pub_len ) );
-    ASN1_CHK_ADD( len, asn1_write_tag( &c, tmp_buf, ASN1_CONSTRUCTED | ASN1_SEQUENCE ) );
-
-    while( cur != NULL )
-    {
-        ASN1_CHK_ADD( sub_len, x509_write_name( &c, tmp_buf, cur->oid, cur->name ) );
-        
+            case MBEDTLS_X509_SAN_DIRECTORY_NAME:
+                MBEDTLS_ASN1_CHK_CLEANUP_ADD(single_san_len,
+                                             mbedtls_x509_write_names(&p, buf,
+                                                                      (mbedtls_asn1_named_data *) &
+                                                                      cur->node
+                                                                      .san.directory_name));
+                MBEDTLS_ASN1_CHK_CLEANUP_ADD(single_san_len,
+                                             mbedtls_asn1_write_len(&p, buf, single_san_len));
+                MBEDTLS_ASN1_CHK_CLEANUP_ADD(single_san_len,
+                                             mbedtls_asn1_write_tag(&p, buf,
+                                                                    MBEDTLS_ASN1_CONTEXT_SPECIFIC |
+                                                                    MBEDTLS_ASN1_CONSTRUCTED |
+                                                                    MBEDTLS_X509_SAN_DIRECTORY_NAME));
+                break;
+            default:
+                /* Error out on an unsupported SAN */
+                ret = MBEDTLS_ERR_X509_FEATURE_UNAVAILABLE;
+                goto cleanup;
+        }
         cur = cur->next;
+        /* check for overflow */
+        if (len > SIZE_MAX - single_san_len) {
+            ret = MBEDTLS_ERR_X509_BAD_INPUT_DATA;
+            goto cleanup;
+        }
+        len += single_san_len;
     }
 
-    len += sub_len;
-    ASN1_CHK_ADD( len, asn1_write_len( &c, tmp_buf, sub_len ) );
-    ASN1_CHK_ADD( len, asn1_write_tag( &c, tmp_buf, ASN1_CONSTRUCTED | ASN1_SEQUENCE ) );
+    MBEDTLS_ASN1_CHK_CLEANUP_ADD(len, mbedtls_asn1_write_len(&p, buf, len));
+    MBEDTLS_ASN1_CHK_CLEANUP_ADD(len,
+                                 mbedtls_asn1_write_tag(&p, buf,
+                                                        MBEDTLS_ASN1_CONSTRUCTED |
+                                                        MBEDTLS_ASN1_SEQUENCE));
 
-    ASN1_CHK_ADD( len, asn1_write_int( &c, tmp_buf, 0 ) );
+    ret = mbedtls_x509_set_extension(extensions,
+                                     MBEDTLS_OID_SUBJECT_ALT_NAME,
+                                     MBEDTLS_OID_SIZE(MBEDTLS_OID_SUBJECT_ALT_NAME),
+                                     0,
+                                     buf + buflen - len, len);
 
-    ASN1_CHK_ADD( len, asn1_write_len( &c, tmp_buf, len ) );
-    ASN1_CHK_ADD( len, asn1_write_tag( &c, tmp_buf, ASN1_CONSTRUCTED | ASN1_SEQUENCE ) );
-    
-    x509_hash( c, len, hash_id, hash );
-
-    rsa_pkcs1_sign( rsa, NULL, NULL, RSA_PRIVATE, hash_id, 0, hash, sig );
-
-    // Generate correct OID
-    //
-    memcpy( sig_oid, OID_PKCS1, 8 );
-    sig_oid[8] = hash_id;
-    sig_oid[9] = '\0';
-
-    c2 = buf + size - 1;
-    ASN1_CHK_ADD( sig_len, x509_write_sig( &c2, buf, sig_oid, sig, rsa->len ) );
-    
-    c2 -= len;
-    memcpy( c2, c, len ); 
-    
-    len += sig_len;
-    ASN1_CHK_ADD( len, asn1_write_len( &c2, buf, len ) );
-    ASN1_CHK_ADD( len, asn1_write_tag( &c2, buf, ASN1_CONSTRUCTED | ASN1_SEQUENCE ) );
-
-    return( len );
+    /* If we exceeded the allocated buffer it means that maximum size of the SubjectAltName list
+     * was incorrectly calculated and memory is corrupted. */
+    if (p < buf) {
+        ret = MBEDTLS_ERR_ASN1_LENGTH_MISMATCH;
+    }
+cleanup:
+    mbedtls_free(buf);
+    return ret;
 }
 
-#endif
+#endif /* MBEDTLS_X509_CSR_WRITE_C || MBEDTLS_X509_CRT_WRITE_C */

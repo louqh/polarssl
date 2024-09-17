@@ -1,101 +1,84 @@
 /*
  *  Simple MPI demonstration program
  *
- *  Copyright (C) 2006-2011, Brainspark B.V.
- *
- *  This file is part of PolarSSL (http://www.polarssl.org)
- *  Lead Maintainer: Paul Bakker <polarssl_maintainer at polarssl.org>
- *
- *  All rights reserved.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ *  Copyright The Mbed TLS Contributors
+ *  SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later
  */
 
-#ifndef _CRT_SECURE_NO_DEPRECATE
-#define _CRT_SECURE_NO_DEPRECATE 1
-#endif
+#include "mbedtls/build_info.h"
+
+#include "mbedtls/platform.h"
+
+#if defined(MBEDTLS_BIGNUM_C) && defined(MBEDTLS_FS_IO)
+#include "mbedtls/bignum.h"
 
 #include <stdio.h>
-
-#include "polarssl/config.h"
-#include "polarssl/bignum.h"
-
-#if !defined(POLARSSL_BIGNUM_C) || !defined(POLARSSL_FS_IO)
-int main( int argc, char *argv[] )
-{
-    ((void) argc);
-    ((void) argv);
-
-    printf("POLARSSL_BIGNUM_C and/or POLARSSL_FS_IO not defined.\n");
-    return( 0 );
-}
-#else
-int main( int argc, char *argv[] )
-{
-    mpi E, P, Q, N, H, D, X, Y, Z;
-
-    ((void) argc);
-    ((void) argv);
-
-    mpi_init( &E ); mpi_init( &P ); mpi_init( &Q ); mpi_init( &N );
-    mpi_init( &H ); mpi_init( &D ); mpi_init( &X ); mpi_init( &Y );
-    mpi_init( &Z );
-
-    mpi_read_string( &P, 10, "2789" );
-    mpi_read_string( &Q, 10, "3203" );
-    mpi_read_string( &E, 10,  "257" );
-    mpi_mul_mpi( &N, &P, &Q );
-
-    printf( "\n  Public key:\n\n" );
-    mpi_write_file( "  N = ", &N, 10, NULL );
-    mpi_write_file( "  E = ", &E, 10, NULL );
-
-    printf( "\n  Private key:\n\n" );
-    mpi_write_file( "  P = ", &P, 10, NULL );
-    mpi_write_file( "  Q = ", &Q, 10, NULL );
-
-#if defined(POLARSSL_GENPRIME)
-    mpi_sub_int( &P, &P, 1 );
-    mpi_sub_int( &Q, &Q, 1 );
-    mpi_mul_mpi( &H, &P, &Q );
-    mpi_inv_mod( &D, &E, &H );
-
-    mpi_write_file( "  D = E^-1 mod (P-1)*(Q-1) = ",
-                    &D, 10, NULL );
-#else
-    printf("\nTest skipped (POLARSSL_GENPRIME not defined).\n\n");
-#endif
-    mpi_read_string( &X, 10, "55555" );
-    mpi_exp_mod( &Y, &X, &E, &N, NULL );
-    mpi_exp_mod( &Z, &Y, &D, &N, NULL );
-
-    printf( "\n  RSA operation:\n\n" );
-    mpi_write_file( "  X (plaintext)  = ", &X, 10, NULL );
-    mpi_write_file( "  Y (ciphertext) = X^E mod N = ", &Y, 10, NULL );
-    mpi_write_file( "  Z (decrypted)  = Y^D mod N = ", &Z, 10, NULL );
-    printf( "\n" );
-
-    mpi_free( &E ); mpi_free( &P ); mpi_free( &Q ); mpi_free( &N );
-    mpi_free( &H ); mpi_free( &D ); mpi_free( &X ); mpi_free( &Y );
-    mpi_free( &Z );
-
-#if defined(_WIN32)
-    printf( "  Press Enter to exit this program.\n" );
-    fflush( stdout ); getchar();
 #endif
 
-    return( 0 );
+#if !defined(MBEDTLS_BIGNUM_C) || !defined(MBEDTLS_FS_IO)
+int main(void)
+{
+    mbedtls_printf("MBEDTLS_BIGNUM_C and/or MBEDTLS_FS_IO not defined.\n");
+    mbedtls_exit(0);
 }
-#endif /* POLARSSL_BIGNUM_C && POLARSSL_FS_IO */
+#else
+
+
+int main(void)
+{
+    int ret = 1;
+    int exit_code = MBEDTLS_EXIT_FAILURE;
+    mbedtls_mpi E, P, Q, N, H, D, X, Y, Z;
+
+    mbedtls_mpi_init(&E); mbedtls_mpi_init(&P); mbedtls_mpi_init(&Q); mbedtls_mpi_init(&N);
+    mbedtls_mpi_init(&H); mbedtls_mpi_init(&D); mbedtls_mpi_init(&X); mbedtls_mpi_init(&Y);
+    mbedtls_mpi_init(&Z);
+
+    MBEDTLS_MPI_CHK(mbedtls_mpi_read_string(&P, 10, "2789"));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_read_string(&Q, 10, "3203"));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_read_string(&E, 10,  "257"));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&N, &P, &Q));
+
+    mbedtls_printf("\n  Public key:\n\n");
+    MBEDTLS_MPI_CHK(mbedtls_mpi_write_file("  N = ", &N, 10, NULL));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_write_file("  E = ", &E, 10, NULL));
+
+    mbedtls_printf("\n  Private key:\n\n");
+    MBEDTLS_MPI_CHK(mbedtls_mpi_write_file("  P = ", &P, 10, NULL));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_write_file("  Q = ", &Q, 10, NULL));
+
+#if defined(MBEDTLS_GENPRIME)
+    MBEDTLS_MPI_CHK(mbedtls_mpi_sub_int(&P, &P, 1));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_sub_int(&Q, &Q, 1));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&H, &P, &Q));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_inv_mod(&D, &E, &H));
+
+    mbedtls_mpi_write_file("  D = E^-1 mod (P-1)*(Q-1) = ",
+                           &D, 10, NULL);
+#else
+    mbedtls_printf("\nTest skipped (MBEDTLS_GENPRIME not defined).\n\n");
+#endif
+    MBEDTLS_MPI_CHK(mbedtls_mpi_read_string(&X, 10, "55555"));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_exp_mod(&Y, &X, &E, &N, NULL));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_exp_mod(&Z, &Y, &D, &N, NULL));
+
+    mbedtls_printf("\n  RSA operation:\n\n");
+    MBEDTLS_MPI_CHK(mbedtls_mpi_write_file("  X (plaintext)  = ", &X, 10, NULL));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_write_file("  Y (ciphertext) = X^E mod N = ", &Y, 10, NULL));
+    MBEDTLS_MPI_CHK(mbedtls_mpi_write_file("  Z (decrypted)  = Y^D mod N = ", &Z, 10, NULL));
+    mbedtls_printf("\n");
+
+    exit_code = MBEDTLS_EXIT_SUCCESS;
+
+cleanup:
+    mbedtls_mpi_free(&E); mbedtls_mpi_free(&P); mbedtls_mpi_free(&Q); mbedtls_mpi_free(&N);
+    mbedtls_mpi_free(&H); mbedtls_mpi_free(&D); mbedtls_mpi_free(&X); mbedtls_mpi_free(&Y);
+    mbedtls_mpi_free(&Z);
+
+    if (exit_code != MBEDTLS_EXIT_SUCCESS) {
+        mbedtls_printf("\nAn error occurred.\n");
+    }
+
+    mbedtls_exit(exit_code);
+}
+#endif /* MBEDTLS_BIGNUM_C && MBEDTLS_FS_IO */

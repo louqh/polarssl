@@ -1,164 +1,161 @@
 /*
- *  RSASSA-PSS/SHA-1 signature creation program
+ *  RSASSA-PSS/SHA-256 signature creation program
  *
- *  Copyright (C) 2006-2011, Brainspark B.V.
- *
- *  This file is part of PolarSSL (http://www.polarssl.org)
- *  Lead Maintainer: Paul Bakker <polarssl_maintainer at polarssl.org>
- *
- *  All rights reserved.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ *  Copyright The Mbed TLS Contributors
+ *  SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later
  */
 
-#ifndef _CRT_SECURE_NO_DEPRECATE
-#define _CRT_SECURE_NO_DEPRECATE 1
-#endif
+#include "mbedtls/build_info.h"
 
-#include <string.h>
-#include <stdio.h>
+#include "mbedtls/platform.h"
+/* md.h is included this early since MD_CAN_XXX macros are defined there. */
+#include "mbedtls/md.h"
 
-#include "polarssl/config.h"
-
-#include "polarssl/entropy.h"
-#include "polarssl/ctr_drbg.h"
-#include "polarssl/md.h"
-#include "polarssl/rsa.h"
-#include "polarssl/sha1.h"
-#include "polarssl/x509.h"
-
-#if defined _MSC_VER && !defined snprintf
-#define snprintf _snprintf
-#endif
-
-#if !defined(POLARSSL_BIGNUM_C) || !defined(POLARSSL_ENTROPY_C) ||  \
-    !defined(POLARSSL_RSA_C) || !defined(POLARSSL_SHA1_C) ||        \
-    !defined(POLARSSL_X509_PARSE_C) || !defined(POLARSSL_FS_IO) ||  \
-    !defined(POLARSSL_CTR_DRBG_C)
-int main( int argc, char *argv[] )
+#if !defined(MBEDTLS_MD_C) || !defined(MBEDTLS_ENTROPY_C) ||  \
+    !defined(MBEDTLS_RSA_C) || !defined(MBEDTLS_MD_CAN_SHA256) ||        \
+    !defined(MBEDTLS_PK_PARSE_C) || !defined(MBEDTLS_FS_IO) ||    \
+    !defined(MBEDTLS_CTR_DRBG_C)
+int main(void)
 {
-    ((void) argc);
-    ((void) argv);
-
-    printf("POLARSSL_BIGNUM_C and/or POLARSSL_ENTROPY_C and/or "
-           "POLARSSL_RSA_C and/or POLARSSL_SHA1_C and/or "
-           "POLARSSL_X509_PARSE_C and/or POLARSSL_FS_IO and/or "
-           "POLARSSL_CTR_DRBG_C not defined.\n");
-    return( 0 );
+    mbedtls_printf("MBEDTLS_MD_C and/or MBEDTLS_ENTROPY_C and/or "
+                   "MBEDTLS_RSA_C and/or MBEDTLS_MD_CAN_SHA256 and/or "
+                   "MBEDTLS_PK_PARSE_C and/or MBEDTLS_FS_IO and/or "
+                   "MBEDTLS_CTR_DRBG_C not defined.\n");
+    mbedtls_exit(0);
 }
 #else
-int main( int argc, char *argv[] )
+
+#include "mbedtls/entropy.h"
+#include "mbedtls/ctr_drbg.h"
+#include "mbedtls/rsa.h"
+#include "mbedtls/pk.h"
+
+#include <stdio.h>
+#include <string.h>
+
+
+int main(int argc, char *argv[])
 {
     FILE *f;
-    int ret;
-    rsa_context rsa;
-    entropy_context entropy;
-    ctr_drbg_context ctr_drbg;
-    unsigned char hash[20];
-    unsigned char buf[POLARSSL_MPI_MAX_SIZE];
+    int ret = 1;
+    int exit_code = MBEDTLS_EXIT_FAILURE;
+    mbedtls_pk_context pk;
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context ctr_drbg;
+    unsigned char hash[32];
+    unsigned char buf[MBEDTLS_MPI_MAX_SIZE];
     char filename[512];
-    char *pers = "rsa_sign_pss";
+    const char *pers = "rsa_sign_pss";
+    size_t olen = 0;
 
-    ret = 1;
+    mbedtls_entropy_init(&entropy);
+    mbedtls_pk_init(&pk);
+    mbedtls_ctr_drbg_init(&ctr_drbg);
 
-    if( argc != 3 )
-    {
-        printf( "usage: rsa_sign_pss <key_file> <filename>\n" );
+#if defined(MBEDTLS_USE_PSA_CRYPTO)
+    psa_status_t status = psa_crypto_init();
+    if (status != PSA_SUCCESS) {
+        mbedtls_fprintf(stderr, "Failed to initialize PSA Crypto implementation: %d\n",
+                        (int) status);
+        goto exit;
+    }
+#endif /* MBEDTLS_USE_PSA_CRYPTO */
+
+    if (argc != 3) {
+        mbedtls_printf("usage: rsa_sign_pss <key_file> <filename>\n");
 
 #if defined(_WIN32)
-        printf( "\n" );
+        mbedtls_printf("\n");
 #endif
 
         goto exit;
     }
 
-    printf( "\n  . Seeding the random number generator..." );
-    fflush( stdout );
+    mbedtls_printf("\n  . Seeding the random number generator...");
+    fflush(stdout);
 
-    entropy_init( &entropy );
-    if( ( ret = ctr_drbg_init( &ctr_drbg, entropy_func, &entropy,
-                               (unsigned char *) pers, strlen( pers ) ) ) != 0 )
-    {
-        printf( " failed\n  ! ctr_drbg_init returned %d\n", ret );
+    if ((ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy,
+                                     (const unsigned char *) pers,
+                                     strlen(pers))) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_ctr_drbg_seed returned %d\n", ret);
         goto exit;
     }
 
-    printf( "\n  . Reading private key from '%s'", argv[1] );
-    fflush( stdout );
+    mbedtls_printf("\n  . Reading private key from '%s'", argv[1]);
+    fflush(stdout);
 
-    rsa_init( &rsa, RSA_PKCS_V21, POLARSSL_MD_SHA1 );
+    if ((ret = mbedtls_pk_parse_keyfile(&pk, argv[1], "",
+                                        mbedtls_ctr_drbg_random, &ctr_drbg)) != 0) {
+        mbedtls_printf(" failed\n  ! Could not read key from '%s'\n", argv[1]);
+        mbedtls_printf("  ! mbedtls_pk_parse_public_keyfile returned %d\n\n", ret);
+        goto exit;
+    }
 
-    if( ( ret = x509parse_keyfile( &rsa, argv[1], "" ) ) != 0 )
-    {
-        ret = 1;
-        printf( " failed\n  ! Could not open '%s'\n", argv[1] );
+    if (!mbedtls_pk_can_do(&pk, MBEDTLS_PK_RSA)) {
+        mbedtls_printf(" failed\n  ! Key is not an RSA key\n");
+        goto exit;
+    }
+
+    if ((ret = mbedtls_rsa_set_padding(mbedtls_pk_rsa(pk),
+                                       MBEDTLS_RSA_PKCS_V21,
+                                       MBEDTLS_MD_SHA256)) != 0) {
+        mbedtls_printf(" failed\n  ! Padding not supported\n");
         goto exit;
     }
 
     /*
-     * Compute the SHA-1 hash of the input file,
+     * Compute the SHA-256 hash of the input file,
      * then calculate the RSA signature of the hash.
      */
-    printf( "\n  . Generating the RSA/SHA-1 signature" );
-    fflush( stdout );
+    mbedtls_printf("\n  . Generating the RSA/SHA-256 signature");
+    fflush(stdout);
 
-    if( ( ret = sha1_file( argv[2], hash ) ) != 0 )
-    {
-        printf( " failed\n  ! Could not open or read %s\n\n", argv[2] );
+    if ((ret = mbedtls_md_file(
+             mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),
+             argv[2], hash)) != 0) {
+        mbedtls_printf(" failed\n  ! Could not open or read %s\n\n", argv[2]);
         goto exit;
     }
 
-    if( ( ret = rsa_pkcs1_sign( &rsa, ctr_drbg_random, &ctr_drbg,
-                                RSA_PRIVATE, SIG_RSA_SHA1,
-                                20, hash, buf ) ) != 0 )
-    {
-        printf( " failed\n  ! rsa_pkcs1_sign returned %d\n\n", ret );
+    if ((ret = mbedtls_pk_sign(&pk, MBEDTLS_MD_SHA256, hash, 0,
+                               buf, sizeof(buf), &olen,
+                               mbedtls_ctr_drbg_random, &ctr_drbg)) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_pk_sign returned %d\n\n", ret);
         goto exit;
     }
 
     /*
-     * Write the signature into <filename>-sig.txt
+     * Write the signature into <filename>.sig
      */
-    snprintf( filename, 512, "%s.sig", argv[2] );
+    mbedtls_snprintf(filename, 512, "%s.sig", argv[2]);
 
-    if( ( f = fopen( filename, "wb+" ) ) == NULL )
-    {
-        ret = 1;
-        printf( " failed\n  ! Could not create %s\n\n", filename );
+    if ((f = fopen(filename, "wb+")) == NULL) {
+        mbedtls_printf(" failed\n  ! Could not create %s\n\n", filename);
         goto exit;
     }
 
-    if( fwrite( buf, 1, rsa.len, f ) != (size_t) rsa.len )
-    {
-        printf( "failed\n  ! fwrite failed\n\n" );
+    if (fwrite(buf, 1, olen, f) != olen) {
+        mbedtls_printf("failed\n  ! fwrite failed\n\n");
+        fclose(f);
         goto exit;
     }
 
-    fclose( f );
+    fclose(f);
 
-    printf( "\n  . Done (created \"%s\")\n\n", filename );
+    mbedtls_printf("\n  . Done (created \"%s\")\n\n", filename);
+
+    exit_code = MBEDTLS_EXIT_SUCCESS;
 
 exit:
+    mbedtls_pk_free(&pk);
+    mbedtls_ctr_drbg_free(&ctr_drbg);
+    mbedtls_entropy_free(&entropy);
+#if defined(MBEDTLS_USE_PSA_CRYPTO)
+    mbedtls_psa_crypto_free();
+#endif /* MBEDTLS_USE_PSA_CRYPTO */
 
-#if defined(_WIN32)
-    printf( "  + Press Enter to exit this program.\n" );
-    fflush( stdout ); getchar();
-#endif
-
-    return( ret );
+    mbedtls_exit(exit_code);
 }
-#endif /* POLARSSL_BIGNUM_C && POLARSSL_ENTROPY_C && POLARSSL_RSA_C &&
-          POLARSSL_SHA1_C && POLARSSL_X509_PARSE_C && POLARSSL_FS_IO &&
-          POLARSSL_CTR_DRBG_C */
+#endif /* MBEDTLS_BIGNUM_C && MBEDTLS_ENTROPY_C && MBEDTLS_RSA_C &&
+          MBEDTLS_MD_CAN_SHA256 && MBEDTLS_PK_PARSE_C && MBEDTLS_FS_IO &&
+          MBEDTLS_CTR_DRBG_C */

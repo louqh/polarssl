@@ -1,148 +1,136 @@
 /*
- *  RSASSA-PSS/SHA-1 signature verification program
+ *  RSASSA-PSS/SHA-256 signature verification program
  *
- *  Copyright (C) 2006-2011, Brainspark B.V.
- *
- *  This file is part of PolarSSL (http://www.polarssl.org)
- *  Lead Maintainer: Paul Bakker <polarssl_maintainer at polarssl.org>
- *
- *  All rights reserved.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ *  Copyright The Mbed TLS Contributors
+ *  SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later
  */
 
-#ifndef _CRT_SECURE_NO_DEPRECATE
-#define _CRT_SECURE_NO_DEPRECATE 1
-#endif
+#include "mbedtls/build_info.h"
 
-#include <string.h>
-#include <stdio.h>
+#include "mbedtls/platform.h"
+/* md.h is included this early since MD_CAN_XXX macros are defined there. */
+#include "mbedtls/md.h"
 
-#include "polarssl/config.h"
-
-#include "polarssl/md.h"
-#include "polarssl/pem.h"
-#include "polarssl/rsa.h"
-#include "polarssl/sha1.h"
-#include "polarssl/x509.h"
-
-#if defined _MSC_VER && !defined snprintf
-#define snprintf _snprintf
-#endif
-
-#if !defined(POLARSSL_BIGNUM_C) || !defined(POLARSSL_RSA_C) ||      \
-    !defined(POLARSSL_SHA1_C) || !defined(POLARSSL_X509_PARSE_C) || \
-    !defined(POLARSSL_FS_IO)
-int main( int argc, char *argv[] )
+#if !defined(MBEDTLS_MD_C) || !defined(MBEDTLS_ENTROPY_C) ||  \
+    !defined(MBEDTLS_RSA_C) || !defined(MBEDTLS_MD_CAN_SHA256) ||        \
+    !defined(MBEDTLS_PK_PARSE_C) || !defined(MBEDTLS_FS_IO) ||    \
+    !defined(MBEDTLS_CTR_DRBG_C)
+int main(void)
 {
-    ((void) argc);
-    ((void) argv);
-
-    printf("POLARSSL_BIGNUM_C and/or POLARSSL_RSA_C and/or "
-           "POLARSSL_SHA1_C and/or POLARSSL_X509_PARSE_C and/or "
-           "POLARSSL_FS_IO not defined.\n");
-    return( 0 );
+    mbedtls_printf("MBEDTLS_MD_C and/or MBEDTLS_ENTROPY_C and/or "
+                   "MBEDTLS_RSA_C and/or MBEDTLS_MD_CAN_SHA256 and/or "
+                   "MBEDTLS_PK_PARSE_C and/or MBEDTLS_FS_IO and/or "
+                   "MBEDTLS_CTR_DRBG_C not defined.\n");
+    mbedtls_exit(0);
 }
 #else
-int main( int argc, char *argv[] )
+
+#include "mbedtls/md.h"
+#include "mbedtls/pem.h"
+#include "mbedtls/pk.h"
+
+#include <stdio.h>
+#include <string.h>
+
+
+int main(int argc, char *argv[])
 {
     FILE *f;
-    int ret;
+    int ret = 1;
+    int exit_code = MBEDTLS_EXIT_FAILURE;
     size_t i;
-    rsa_context rsa;
-    unsigned char hash[20];
-    unsigned char buf[POLARSSL_MPI_MAX_SIZE];
+    mbedtls_pk_context pk;
+    unsigned char hash[32];
+    unsigned char buf[MBEDTLS_MPI_MAX_SIZE];
     char filename[512];
 
-    ret = 1;
-    if( argc != 3 )
-    {
-        printf( "usage: rsa_verify_pss <key_file> <filename>\n" );
+    mbedtls_pk_init(&pk);
+
+#if defined(MBEDTLS_USE_PSA_CRYPTO)
+    psa_status_t status = psa_crypto_init();
+    if (status != PSA_SUCCESS) {
+        mbedtls_fprintf(stderr, "Failed to initialize PSA Crypto implementation: %d\n",
+                        (int) status);
+        goto exit;
+    }
+#endif /* MBEDTLS_USE_PSA_CRYPTO */
+
+    if (argc != 3) {
+        mbedtls_printf("usage: rsa_verify_pss <key_file> <filename>\n");
 
 #if defined(_WIN32)
-        printf( "\n" );
+        mbedtls_printf("\n");
 #endif
 
         goto exit;
     }
 
-    printf( "\n  . Reading public key from '%s'", argv[1] );
-    fflush( stdout );
+    mbedtls_printf("\n  . Reading public key from '%s'", argv[1]);
+    fflush(stdout);
 
-    rsa_init( &rsa, RSA_PKCS_V21, POLARSSL_MD_SHA1 );
+    if ((ret = mbedtls_pk_parse_public_keyfile(&pk, argv[1])) != 0) {
+        mbedtls_printf(" failed\n  ! Could not read key from '%s'\n", argv[1]);
+        mbedtls_printf("  ! mbedtls_pk_parse_public_keyfile returned %d\n\n", ret);
+        goto exit;
+    }
 
-    if( ( ret = x509parse_public_keyfile( &rsa, argv[1] ) ) != 0 )
-    {
-        printf( " failed\n  ! x509parse_public_key returned %d\n\n", ret );
+    if (!mbedtls_pk_can_do(&pk, MBEDTLS_PK_RSA)) {
+        mbedtls_printf(" failed\n  ! Key is not an RSA key\n");
+        goto exit;
+    }
+
+    if ((ret = mbedtls_rsa_set_padding(mbedtls_pk_rsa(pk),
+                                       MBEDTLS_RSA_PKCS_V21,
+                                       MBEDTLS_MD_SHA256)) != 0) {
+        mbedtls_printf(" failed\n  ! Invalid padding\n");
         goto exit;
     }
 
     /*
-     * Extract the RSA signature from the text file
+     * Extract the RSA signature from the file
      */
-    ret = 1;
-    snprintf( filename, 512, "%s.sig", argv[2] );
+    mbedtls_snprintf(filename, 512, "%s.sig", argv[2]);
 
-    if( ( f = fopen( filename, "rb" ) ) == NULL )
-    {
-        printf( "\n  ! Could not open %s\n\n", filename );
+    if ((f = fopen(filename, "rb")) == NULL) {
+        mbedtls_printf("\n  ! Could not open %s\n\n", filename);
         goto exit;
     }
 
-    i = fread( buf, 1, rsa.len, f );
+    i = fread(buf, 1, MBEDTLS_MPI_MAX_SIZE, f);
 
-    fclose( f );
-
-    if( i != rsa.len )
-    {
-        printf( "\n  ! Invalid RSA signature format\n\n" );
-        goto exit;
-    }
+    fclose(f);
 
     /*
-     * Compute the SHA-1 hash of the input file and compare
-     * it with the hash decrypted from the RSA signature.
+     * Compute the SHA-256 hash of the input file and
+     * verify the signature
      */
-    printf( "\n  . Verifying the RSA/SHA-1 signature" );
-    fflush( stdout );
+    mbedtls_printf("\n  . Verifying the RSA/SHA-256 signature");
+    fflush(stdout);
 
-    if( ( ret = sha1_file( argv[2], hash ) ) != 0 )
-    {
-        printf( " failed\n  ! Could not open or read %s\n\n", argv[2] );
+    if ((ret = mbedtls_md_file(
+             mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),
+             argv[2], hash)) != 0) {
+        mbedtls_printf(" failed\n  ! Could not open or read %s\n\n", argv[2]);
         goto exit;
     }
 
-    if( ( ret = rsa_pkcs1_verify( &rsa, RSA_PUBLIC, SIG_RSA_SHA1,
-                                  20, hash, buf ) ) != 0 )
-    {
-        printf( " failed\n  ! rsa_pkcs1_verify returned %d\n\n", ret );
+    if ((ret = mbedtls_pk_verify(&pk, MBEDTLS_MD_SHA256, hash, 0,
+                                 buf, i)) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_pk_verify returned %d\n\n", ret);
         goto exit;
     }
 
-    printf( "\n  . OK (the decrypted SHA-1 hash matches)\n\n" );
+    mbedtls_printf("\n  . OK (the signature is valid)\n\n");
 
-    ret = 0;
+    exit_code = MBEDTLS_EXIT_SUCCESS;
 
 exit:
+    mbedtls_pk_free(&pk);
+#if defined(MBEDTLS_USE_PSA_CRYPTO)
+    mbedtls_psa_crypto_free();
+#endif /* MBEDTLS_USE_PSA_CRYPTO */
 
-#if defined(_WIN32)
-    printf( "  + Press Enter to exit this program.\n" );
-    fflush( stdout ); getchar();
-#endif
-
-    return( ret );
+    mbedtls_exit(exit_code);
 }
-#endif /* POLARSSL_BIGNUM_C && POLARSSL_RSA_C && POLARSSL_SHA1_C &&
-          POLARSSL_X509_PARSE_C && POLARSSL_FS_IO */
+#endif /* MBEDTLS_BIGNUM_C && MBEDTLS_RSA_C && MBEDTLS_MD_CAN_SHA256 &&
+          MBEDTLS_PK_PARSE_C && MBEDTLS_FS_IO */

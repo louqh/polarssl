@@ -1,26 +1,8 @@
 /*
  *  FIPS-180-1 compliant SHA-1 implementation
  *
- *  Copyright (C) 2006-2010, Brainspark B.V.
- *
- *  This file is part of PolarSSL (http://www.polarssl.org)
- *  Lead Maintainer: Paul Bakker <polarssl_maintainer at polarssl.org>
- *
- *  All rights reserved.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ *  Copyright The Mbed TLS Contributors
+ *  SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later
  */
 /*
  *  The SHA-1 standard was published by NIST in 1993.
@@ -28,43 +10,44 @@
  *  http://www.itl.nist.gov/fipspubs/fip180-1.htm
  */
 
-#include "polarssl/config.h"
+#include "common.h"
 
-#if defined(POLARSSL_SHA1_C)
+#if defined(MBEDTLS_SHA1_C)
 
-#include "polarssl/sha1.h"
+#include "mbedtls/sha1.h"
+#include "mbedtls/platform_util.h"
+#include "mbedtls/error.h"
 
-#if defined(POLARSSL_FS_IO) || defined(POLARSSL_SELF_TEST)
-#include <stdio.h>
-#endif
+#include <string.h>
 
-/*
- * 32-bit integer manipulation macros (big endian)
- */
-#ifndef GET_UINT32_BE
-#define GET_UINT32_BE(n,b,i)                            \
-{                                                       \
-    (n) = ( (uint32_t) (b)[(i)    ] << 24 )             \
-        | ( (uint32_t) (b)[(i) + 1] << 16 )             \
-        | ( (uint32_t) (b)[(i) + 2] <<  8 )             \
-        | ( (uint32_t) (b)[(i) + 3]       );            \
+#include "mbedtls/platform.h"
+
+#if !defined(MBEDTLS_SHA1_ALT)
+
+void mbedtls_sha1_init(mbedtls_sha1_context *ctx)
+{
+    memset(ctx, 0, sizeof(mbedtls_sha1_context));
 }
-#endif
 
-#ifndef PUT_UINT32_BE
-#define PUT_UINT32_BE(n,b,i)                            \
-{                                                       \
-    (b)[(i)    ] = (unsigned char) ( (n) >> 24 );       \
-    (b)[(i) + 1] = (unsigned char) ( (n) >> 16 );       \
-    (b)[(i) + 2] = (unsigned char) ( (n) >>  8 );       \
-    (b)[(i) + 3] = (unsigned char) ( (n)       );       \
+void mbedtls_sha1_free(mbedtls_sha1_context *ctx)
+{
+    if (ctx == NULL) {
+        return;
+    }
+
+    mbedtls_platform_zeroize(ctx, sizeof(mbedtls_sha1_context));
 }
-#endif
+
+void mbedtls_sha1_clone(mbedtls_sha1_context *dst,
+                        const mbedtls_sha1_context *src)
+{
+    *dst = *src;
+}
 
 /*
  * SHA-1 context setup
  */
-void sha1_starts( sha1_context *ctx )
+int mbedtls_sha1_starts(mbedtls_sha1_context *ctx)
 {
     ctx->total[0] = 0;
     ctx->total[1] = 0;
@@ -74,174 +57,195 @@ void sha1_starts( sha1_context *ctx )
     ctx->state[2] = 0x98BADCFE;
     ctx->state[3] = 0x10325476;
     ctx->state[4] = 0xC3D2E1F0;
+
+    return 0;
 }
 
-static void sha1_process( sha1_context *ctx, const unsigned char data[64] )
+#if !defined(MBEDTLS_SHA1_PROCESS_ALT)
+int mbedtls_internal_sha1_process(mbedtls_sha1_context *ctx,
+                                  const unsigned char data[64])
 {
-    uint32_t temp, W[16], A, B, C, D, E;
+    struct {
+        uint32_t temp, W[16], A, B, C, D, E;
+    } local;
 
-    GET_UINT32_BE( W[ 0], data,  0 );
-    GET_UINT32_BE( W[ 1], data,  4 );
-    GET_UINT32_BE( W[ 2], data,  8 );
-    GET_UINT32_BE( W[ 3], data, 12 );
-    GET_UINT32_BE( W[ 4], data, 16 );
-    GET_UINT32_BE( W[ 5], data, 20 );
-    GET_UINT32_BE( W[ 6], data, 24 );
-    GET_UINT32_BE( W[ 7], data, 28 );
-    GET_UINT32_BE( W[ 8], data, 32 );
-    GET_UINT32_BE( W[ 9], data, 36 );
-    GET_UINT32_BE( W[10], data, 40 );
-    GET_UINT32_BE( W[11], data, 44 );
-    GET_UINT32_BE( W[12], data, 48 );
-    GET_UINT32_BE( W[13], data, 52 );
-    GET_UINT32_BE( W[14], data, 56 );
-    GET_UINT32_BE( W[15], data, 60 );
+    local.W[0] = MBEDTLS_GET_UINT32_BE(data,  0);
+    local.W[1] = MBEDTLS_GET_UINT32_BE(data,  4);
+    local.W[2] = MBEDTLS_GET_UINT32_BE(data,  8);
+    local.W[3] = MBEDTLS_GET_UINT32_BE(data, 12);
+    local.W[4] = MBEDTLS_GET_UINT32_BE(data, 16);
+    local.W[5] = MBEDTLS_GET_UINT32_BE(data, 20);
+    local.W[6] = MBEDTLS_GET_UINT32_BE(data, 24);
+    local.W[7] = MBEDTLS_GET_UINT32_BE(data, 28);
+    local.W[8] = MBEDTLS_GET_UINT32_BE(data, 32);
+    local.W[9] = MBEDTLS_GET_UINT32_BE(data, 36);
+    local.W[10] = MBEDTLS_GET_UINT32_BE(data, 40);
+    local.W[11] = MBEDTLS_GET_UINT32_BE(data, 44);
+    local.W[12] = MBEDTLS_GET_UINT32_BE(data, 48);
+    local.W[13] = MBEDTLS_GET_UINT32_BE(data, 52);
+    local.W[14] = MBEDTLS_GET_UINT32_BE(data, 56);
+    local.W[15] = MBEDTLS_GET_UINT32_BE(data, 60);
 
-#define S(x,n) ((x << n) | ((x & 0xFFFFFFFF) >> (32 - n)))
+#define S(x, n) (((x) << (n)) | (((x) & 0xFFFFFFFF) >> (32 - (n))))
 
-#define R(t)                                            \
-(                                                       \
-    temp = W[(t -  3) & 0x0F] ^ W[(t - 8) & 0x0F] ^     \
-           W[(t - 14) & 0x0F] ^ W[ t      & 0x0F],      \
-    ( W[t & 0x0F] = S(temp,1) )                         \
-)
+#define R(t)                                                    \
+    (                                                           \
+        local.temp = local.W[((t) -  3) & 0x0F] ^             \
+                     local.W[((t) -  8) & 0x0F] ^             \
+                     local.W[((t) - 14) & 0x0F] ^             \
+                     local.W[(t)        & 0x0F],              \
+        (local.W[(t) & 0x0F] = S(local.temp, 1))               \
+    )
 
-#define P(a,b,c,d,e,x)                                  \
-{                                                       \
-    e += S(a,5) + F(b,c,d) + K + x; b = S(b,30);        \
-}
+#define P(a, b, c, d, e, x)                                          \
+    do                                                          \
+    {                                                           \
+        (e) += S((a), 5) + F((b), (c), (d)) + K + (x);             \
+        (b) = S((b), 30);                                        \
+    } while (0)
 
-    A = ctx->state[0];
-    B = ctx->state[1];
-    C = ctx->state[2];
-    D = ctx->state[3];
-    E = ctx->state[4];
+    local.A = ctx->state[0];
+    local.B = ctx->state[1];
+    local.C = ctx->state[2];
+    local.D = ctx->state[3];
+    local.E = ctx->state[4];
 
-#define F(x,y,z) (z ^ (x & (y ^ z)))
+#define F(x, y, z) ((z) ^ ((x) & ((y) ^ (z))))
 #define K 0x5A827999
 
-    P( A, B, C, D, E, W[0]  );
-    P( E, A, B, C, D, W[1]  );
-    P( D, E, A, B, C, W[2]  );
-    P( C, D, E, A, B, W[3]  );
-    P( B, C, D, E, A, W[4]  );
-    P( A, B, C, D, E, W[5]  );
-    P( E, A, B, C, D, W[6]  );
-    P( D, E, A, B, C, W[7]  );
-    P( C, D, E, A, B, W[8]  );
-    P( B, C, D, E, A, W[9]  );
-    P( A, B, C, D, E, W[10] );
-    P( E, A, B, C, D, W[11] );
-    P( D, E, A, B, C, W[12] );
-    P( C, D, E, A, B, W[13] );
-    P( B, C, D, E, A, W[14] );
-    P( A, B, C, D, E, W[15] );
-    P( E, A, B, C, D, R(16) );
-    P( D, E, A, B, C, R(17) );
-    P( C, D, E, A, B, R(18) );
-    P( B, C, D, E, A, R(19) );
+    P(local.A, local.B, local.C, local.D, local.E, local.W[0]);
+    P(local.E, local.A, local.B, local.C, local.D, local.W[1]);
+    P(local.D, local.E, local.A, local.B, local.C, local.W[2]);
+    P(local.C, local.D, local.E, local.A, local.B, local.W[3]);
+    P(local.B, local.C, local.D, local.E, local.A, local.W[4]);
+    P(local.A, local.B, local.C, local.D, local.E, local.W[5]);
+    P(local.E, local.A, local.B, local.C, local.D, local.W[6]);
+    P(local.D, local.E, local.A, local.B, local.C, local.W[7]);
+    P(local.C, local.D, local.E, local.A, local.B, local.W[8]);
+    P(local.B, local.C, local.D, local.E, local.A, local.W[9]);
+    P(local.A, local.B, local.C, local.D, local.E, local.W[10]);
+    P(local.E, local.A, local.B, local.C, local.D, local.W[11]);
+    P(local.D, local.E, local.A, local.B, local.C, local.W[12]);
+    P(local.C, local.D, local.E, local.A, local.B, local.W[13]);
+    P(local.B, local.C, local.D, local.E, local.A, local.W[14]);
+    P(local.A, local.B, local.C, local.D, local.E, local.W[15]);
+    P(local.E, local.A, local.B, local.C, local.D, R(16));
+    P(local.D, local.E, local.A, local.B, local.C, R(17));
+    P(local.C, local.D, local.E, local.A, local.B, R(18));
+    P(local.B, local.C, local.D, local.E, local.A, R(19));
 
 #undef K
 #undef F
 
-#define F(x,y,z) (x ^ y ^ z)
+#define F(x, y, z) ((x) ^ (y) ^ (z))
 #define K 0x6ED9EBA1
 
-    P( A, B, C, D, E, R(20) );
-    P( E, A, B, C, D, R(21) );
-    P( D, E, A, B, C, R(22) );
-    P( C, D, E, A, B, R(23) );
-    P( B, C, D, E, A, R(24) );
-    P( A, B, C, D, E, R(25) );
-    P( E, A, B, C, D, R(26) );
-    P( D, E, A, B, C, R(27) );
-    P( C, D, E, A, B, R(28) );
-    P( B, C, D, E, A, R(29) );
-    P( A, B, C, D, E, R(30) );
-    P( E, A, B, C, D, R(31) );
-    P( D, E, A, B, C, R(32) );
-    P( C, D, E, A, B, R(33) );
-    P( B, C, D, E, A, R(34) );
-    P( A, B, C, D, E, R(35) );
-    P( E, A, B, C, D, R(36) );
-    P( D, E, A, B, C, R(37) );
-    P( C, D, E, A, B, R(38) );
-    P( B, C, D, E, A, R(39) );
+    P(local.A, local.B, local.C, local.D, local.E, R(20));
+    P(local.E, local.A, local.B, local.C, local.D, R(21));
+    P(local.D, local.E, local.A, local.B, local.C, R(22));
+    P(local.C, local.D, local.E, local.A, local.B, R(23));
+    P(local.B, local.C, local.D, local.E, local.A, R(24));
+    P(local.A, local.B, local.C, local.D, local.E, R(25));
+    P(local.E, local.A, local.B, local.C, local.D, R(26));
+    P(local.D, local.E, local.A, local.B, local.C, R(27));
+    P(local.C, local.D, local.E, local.A, local.B, R(28));
+    P(local.B, local.C, local.D, local.E, local.A, R(29));
+    P(local.A, local.B, local.C, local.D, local.E, R(30));
+    P(local.E, local.A, local.B, local.C, local.D, R(31));
+    P(local.D, local.E, local.A, local.B, local.C, R(32));
+    P(local.C, local.D, local.E, local.A, local.B, R(33));
+    P(local.B, local.C, local.D, local.E, local.A, R(34));
+    P(local.A, local.B, local.C, local.D, local.E, R(35));
+    P(local.E, local.A, local.B, local.C, local.D, R(36));
+    P(local.D, local.E, local.A, local.B, local.C, R(37));
+    P(local.C, local.D, local.E, local.A, local.B, R(38));
+    P(local.B, local.C, local.D, local.E, local.A, R(39));
 
 #undef K
 #undef F
 
-#define F(x,y,z) ((x & y) | (z & (x | y)))
+#define F(x, y, z) (((x) & (y)) | ((z) & ((x) | (y))))
 #define K 0x8F1BBCDC
 
-    P( A, B, C, D, E, R(40) );
-    P( E, A, B, C, D, R(41) );
-    P( D, E, A, B, C, R(42) );
-    P( C, D, E, A, B, R(43) );
-    P( B, C, D, E, A, R(44) );
-    P( A, B, C, D, E, R(45) );
-    P( E, A, B, C, D, R(46) );
-    P( D, E, A, B, C, R(47) );
-    P( C, D, E, A, B, R(48) );
-    P( B, C, D, E, A, R(49) );
-    P( A, B, C, D, E, R(50) );
-    P( E, A, B, C, D, R(51) );
-    P( D, E, A, B, C, R(52) );
-    P( C, D, E, A, B, R(53) );
-    P( B, C, D, E, A, R(54) );
-    P( A, B, C, D, E, R(55) );
-    P( E, A, B, C, D, R(56) );
-    P( D, E, A, B, C, R(57) );
-    P( C, D, E, A, B, R(58) );
-    P( B, C, D, E, A, R(59) );
+    P(local.A, local.B, local.C, local.D, local.E, R(40));
+    P(local.E, local.A, local.B, local.C, local.D, R(41));
+    P(local.D, local.E, local.A, local.B, local.C, R(42));
+    P(local.C, local.D, local.E, local.A, local.B, R(43));
+    P(local.B, local.C, local.D, local.E, local.A, R(44));
+    P(local.A, local.B, local.C, local.D, local.E, R(45));
+    P(local.E, local.A, local.B, local.C, local.D, R(46));
+    P(local.D, local.E, local.A, local.B, local.C, R(47));
+    P(local.C, local.D, local.E, local.A, local.B, R(48));
+    P(local.B, local.C, local.D, local.E, local.A, R(49));
+    P(local.A, local.B, local.C, local.D, local.E, R(50));
+    P(local.E, local.A, local.B, local.C, local.D, R(51));
+    P(local.D, local.E, local.A, local.B, local.C, R(52));
+    P(local.C, local.D, local.E, local.A, local.B, R(53));
+    P(local.B, local.C, local.D, local.E, local.A, R(54));
+    P(local.A, local.B, local.C, local.D, local.E, R(55));
+    P(local.E, local.A, local.B, local.C, local.D, R(56));
+    P(local.D, local.E, local.A, local.B, local.C, R(57));
+    P(local.C, local.D, local.E, local.A, local.B, R(58));
+    P(local.B, local.C, local.D, local.E, local.A, R(59));
 
 #undef K
 #undef F
 
-#define F(x,y,z) (x ^ y ^ z)
+#define F(x, y, z) ((x) ^ (y) ^ (z))
 #define K 0xCA62C1D6
 
-    P( A, B, C, D, E, R(60) );
-    P( E, A, B, C, D, R(61) );
-    P( D, E, A, B, C, R(62) );
-    P( C, D, E, A, B, R(63) );
-    P( B, C, D, E, A, R(64) );
-    P( A, B, C, D, E, R(65) );
-    P( E, A, B, C, D, R(66) );
-    P( D, E, A, B, C, R(67) );
-    P( C, D, E, A, B, R(68) );
-    P( B, C, D, E, A, R(69) );
-    P( A, B, C, D, E, R(70) );
-    P( E, A, B, C, D, R(71) );
-    P( D, E, A, B, C, R(72) );
-    P( C, D, E, A, B, R(73) );
-    P( B, C, D, E, A, R(74) );
-    P( A, B, C, D, E, R(75) );
-    P( E, A, B, C, D, R(76) );
-    P( D, E, A, B, C, R(77) );
-    P( C, D, E, A, B, R(78) );
-    P( B, C, D, E, A, R(79) );
+    P(local.A, local.B, local.C, local.D, local.E, R(60));
+    P(local.E, local.A, local.B, local.C, local.D, R(61));
+    P(local.D, local.E, local.A, local.B, local.C, R(62));
+    P(local.C, local.D, local.E, local.A, local.B, R(63));
+    P(local.B, local.C, local.D, local.E, local.A, R(64));
+    P(local.A, local.B, local.C, local.D, local.E, R(65));
+    P(local.E, local.A, local.B, local.C, local.D, R(66));
+    P(local.D, local.E, local.A, local.B, local.C, R(67));
+    P(local.C, local.D, local.E, local.A, local.B, R(68));
+    P(local.B, local.C, local.D, local.E, local.A, R(69));
+    P(local.A, local.B, local.C, local.D, local.E, R(70));
+    P(local.E, local.A, local.B, local.C, local.D, R(71));
+    P(local.D, local.E, local.A, local.B, local.C, R(72));
+    P(local.C, local.D, local.E, local.A, local.B, R(73));
+    P(local.B, local.C, local.D, local.E, local.A, R(74));
+    P(local.A, local.B, local.C, local.D, local.E, R(75));
+    P(local.E, local.A, local.B, local.C, local.D, R(76));
+    P(local.D, local.E, local.A, local.B, local.C, R(77));
+    P(local.C, local.D, local.E, local.A, local.B, R(78));
+    P(local.B, local.C, local.D, local.E, local.A, R(79));
 
 #undef K
 #undef F
 
-    ctx->state[0] += A;
-    ctx->state[1] += B;
-    ctx->state[2] += C;
-    ctx->state[3] += D;
-    ctx->state[4] += E;
+    ctx->state[0] += local.A;
+    ctx->state[1] += local.B;
+    ctx->state[2] += local.C;
+    ctx->state[3] += local.D;
+    ctx->state[4] += local.E;
+
+    /* Zeroise buffers and variables to clear sensitive data from memory. */
+    mbedtls_platform_zeroize(&local, sizeof(local));
+
+    return 0;
 }
+
+#endif /* !MBEDTLS_SHA1_PROCESS_ALT */
 
 /*
  * SHA-1 process buffer
  */
-void sha1_update( sha1_context *ctx, const unsigned char *input, size_t ilen )
+int mbedtls_sha1_update(mbedtls_sha1_context *ctx,
+                        const unsigned char *input,
+                        size_t ilen)
 {
+    int ret = MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED;
     size_t fill;
     uint32_t left;
 
-    if( ilen <= 0 )
-        return;
+    if (ilen == 0) {
+        return 0;
+    }
 
     left = ctx->total[0] & 0x3F;
     fill = 64 - left;
@@ -249,209 +253,142 @@ void sha1_update( sha1_context *ctx, const unsigned char *input, size_t ilen )
     ctx->total[0] += (uint32_t) ilen;
     ctx->total[0] &= 0xFFFFFFFF;
 
-    if( ctx->total[0] < (uint32_t) ilen )
+    if (ctx->total[0] < (uint32_t) ilen) {
         ctx->total[1]++;
+    }
 
-    if( left && ilen >= fill )
-    {
-        memcpy( (void *) (ctx->buffer + left),
-                (void *) input, fill );
-        sha1_process( ctx, ctx->buffer );
+    if (left && ilen >= fill) {
+        memcpy((void *) (ctx->buffer + left), input, fill);
+
+        if ((ret = mbedtls_internal_sha1_process(ctx, ctx->buffer)) != 0) {
+            return ret;
+        }
+
         input += fill;
         ilen  -= fill;
         left = 0;
     }
 
-    while( ilen >= 64 )
-    {
-        sha1_process( ctx, input );
+    while (ilen >= 64) {
+        if ((ret = mbedtls_internal_sha1_process(ctx, input)) != 0) {
+            return ret;
+        }
+
         input += 64;
         ilen  -= 64;
     }
 
-    if( ilen > 0 )
-    {
-        memcpy( (void *) (ctx->buffer + left),
-                (void *) input, ilen );
+    if (ilen > 0) {
+        memcpy((void *) (ctx->buffer + left), input, ilen);
     }
-}
 
-static const unsigned char sha1_padding[64] =
-{
- 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-};
+    return 0;
+}
 
 /*
  * SHA-1 final digest
  */
-void sha1_finish( sha1_context *ctx, unsigned char output[20] )
+int mbedtls_sha1_finish(mbedtls_sha1_context *ctx,
+                        unsigned char output[20])
 {
-    uint32_t last, padn;
+    int ret = MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED;
+    uint32_t used;
     uint32_t high, low;
-    unsigned char msglen[8];
 
-    high = ( ctx->total[0] >> 29 )
-         | ( ctx->total[1] <<  3 );
-    low  = ( ctx->total[0] <<  3 );
+    /*
+     * Add padding: 0x80 then 0x00 until 8 bytes remain for the length
+     */
+    used = ctx->total[0] & 0x3F;
 
-    PUT_UINT32_BE( high, msglen, 0 );
-    PUT_UINT32_BE( low,  msglen, 4 );
+    ctx->buffer[used++] = 0x80;
 
-    last = ctx->total[0] & 0x3F;
-    padn = ( last < 56 ) ? ( 56 - last ) : ( 120 - last );
+    if (used <= 56) {
+        /* Enough room for padding + length in current block */
+        memset(ctx->buffer + used, 0, 56 - used);
+    } else {
+        /* We'll need an extra block */
+        memset(ctx->buffer + used, 0, 64 - used);
 
-    sha1_update( ctx, (unsigned char *) sha1_padding, padn );
-    sha1_update( ctx, msglen, 8 );
+        if ((ret = mbedtls_internal_sha1_process(ctx, ctx->buffer)) != 0) {
+            goto exit;
+        }
 
-    PUT_UINT32_BE( ctx->state[0], output,  0 );
-    PUT_UINT32_BE( ctx->state[1], output,  4 );
-    PUT_UINT32_BE( ctx->state[2], output,  8 );
-    PUT_UINT32_BE( ctx->state[3], output, 12 );
-    PUT_UINT32_BE( ctx->state[4], output, 16 );
+        memset(ctx->buffer, 0, 56);
+    }
+
+    /*
+     * Add message length
+     */
+    high = (ctx->total[0] >> 29)
+           | (ctx->total[1] <<  3);
+    low  = (ctx->total[0] <<  3);
+
+    MBEDTLS_PUT_UINT32_BE(high, ctx->buffer, 56);
+    MBEDTLS_PUT_UINT32_BE(low,  ctx->buffer, 60);
+
+    if ((ret = mbedtls_internal_sha1_process(ctx, ctx->buffer)) != 0) {
+        goto exit;
+    }
+
+    /*
+     * Output final state
+     */
+    MBEDTLS_PUT_UINT32_BE(ctx->state[0], output,  0);
+    MBEDTLS_PUT_UINT32_BE(ctx->state[1], output,  4);
+    MBEDTLS_PUT_UINT32_BE(ctx->state[2], output,  8);
+    MBEDTLS_PUT_UINT32_BE(ctx->state[3], output, 12);
+    MBEDTLS_PUT_UINT32_BE(ctx->state[4], output, 16);
+
+    ret = 0;
+
+exit:
+    mbedtls_sha1_free(ctx);
+    return ret;
 }
+
+#endif /* !MBEDTLS_SHA1_ALT */
 
 /*
  * output = SHA-1( input buffer )
  */
-void sha1( const unsigned char *input, size_t ilen, unsigned char output[20] )
+int mbedtls_sha1(const unsigned char *input,
+                 size_t ilen,
+                 unsigned char output[20])
 {
-    sha1_context ctx;
+    int ret = MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED;
+    mbedtls_sha1_context ctx;
 
-    sha1_starts( &ctx );
-    sha1_update( &ctx, input, ilen );
-    sha1_finish( &ctx, output );
+    mbedtls_sha1_init(&ctx);
 
-    memset( &ctx, 0, sizeof( sha1_context ) );
-}
-
-#if defined(POLARSSL_FS_IO)
-/*
- * output = SHA-1( file contents )
- */
-int sha1_file( const char *path, unsigned char output[20] )
-{
-    FILE *f;
-    size_t n;
-    sha1_context ctx;
-    unsigned char buf[1024];
-
-    if( ( f = fopen( path, "rb" ) ) == NULL )
-        return( POLARSSL_ERR_SHA1_FILE_IO_ERROR );
-
-    sha1_starts( &ctx );
-
-    while( ( n = fread( buf, 1, sizeof( buf ), f ) ) > 0 )
-        sha1_update( &ctx, buf, n );
-
-    sha1_finish( &ctx, output );
-
-    memset( &ctx, 0, sizeof( sha1_context ) );
-
-    if( ferror( f ) != 0 )
-    {
-        fclose( f );
-        return( POLARSSL_ERR_SHA1_FILE_IO_ERROR );
+    if ((ret = mbedtls_sha1_starts(&ctx)) != 0) {
+        goto exit;
     }
 
-    fclose( f );
-    return( 0 );
-}
-#endif /* POLARSSL_FS_IO */
-
-/*
- * SHA-1 HMAC context setup
- */
-void sha1_hmac_starts( sha1_context *ctx, const unsigned char *key, size_t keylen )
-{
-    size_t i;
-    unsigned char sum[20];
-
-    if( keylen > 64 )
-    {
-        sha1( key, keylen, sum );
-        keylen = 20;
-        key = sum;
+    if ((ret = mbedtls_sha1_update(&ctx, input, ilen)) != 0) {
+        goto exit;
     }
 
-    memset( ctx->ipad, 0x36, 64 );
-    memset( ctx->opad, 0x5C, 64 );
-
-    for( i = 0; i < keylen; i++ )
-    {
-        ctx->ipad[i] = (unsigned char)( ctx->ipad[i] ^ key[i] );
-        ctx->opad[i] = (unsigned char)( ctx->opad[i] ^ key[i] );
+    if ((ret = mbedtls_sha1_finish(&ctx, output)) != 0) {
+        goto exit;
     }
 
-    sha1_starts( ctx );
-    sha1_update( ctx, ctx->ipad, 64 );
-
-    memset( sum, 0, sizeof( sum ) );
+exit:
+    mbedtls_sha1_free(&ctx);
+    return ret;
 }
 
-/*
- * SHA-1 HMAC process buffer
- */
-void sha1_hmac_update( sha1_context *ctx, const unsigned char *input, size_t ilen )
-{
-    sha1_update( ctx, input, ilen );
-}
-
-/*
- * SHA-1 HMAC final digest
- */
-void sha1_hmac_finish( sha1_context *ctx, unsigned char output[20] )
-{
-    unsigned char tmpbuf[20];
-
-    sha1_finish( ctx, tmpbuf );
-    sha1_starts( ctx );
-    sha1_update( ctx, ctx->opad, 64 );
-    sha1_update( ctx, tmpbuf, 20 );
-    sha1_finish( ctx, output );
-
-    memset( tmpbuf, 0, sizeof( tmpbuf ) );
-}
-
-/*
- * SHA1 HMAC context reset
- */
-void sha1_hmac_reset( sha1_context *ctx )
-{
-    sha1_starts( ctx );
-    sha1_update( ctx, ctx->ipad, 64 );
-}
-
-/*
- * output = HMAC-SHA-1( hmac key, input buffer )
- */
-void sha1_hmac( const unsigned char *key, size_t keylen,
-                const unsigned char *input, size_t ilen,
-                unsigned char output[20] )
-{
-    sha1_context ctx;
-
-    sha1_hmac_starts( &ctx, key, keylen );
-    sha1_hmac_update( &ctx, input, ilen );
-    sha1_hmac_finish( &ctx, output );
-
-    memset( &ctx, 0, sizeof( sha1_context ) );
-}
-
-#if defined(POLARSSL_SELF_TEST)
+#if defined(MBEDTLS_SELF_TEST)
 /*
  * FIPS-180-1 test vectors
  */
-static unsigned char sha1_test_buf[3][57] = 
+static const unsigned char sha1_test_buf[3][57] =
 {
     { "abc" },
     { "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq" },
     { "" }
 };
 
-static const int sha1_test_buflen[3] =
+static const size_t sha1_test_buflen[3] =
 {
     3, 56, 1000
 };
@@ -467,158 +404,77 @@ static const unsigned char sha1_test_sum[3][20] =
 };
 
 /*
- * RFC 2202 test vectors
- */
-static unsigned char sha1_hmac_test_key[7][26] =
-{
-    { "\x0B\x0B\x0B\x0B\x0B\x0B\x0B\x0B\x0B\x0B\x0B\x0B\x0B\x0B\x0B\x0B"
-      "\x0B\x0B\x0B\x0B" },
-    { "Jefe" },
-    { "\xAA\xAA\xAA\xAA\xAA\xAA\xAA\xAA\xAA\xAA\xAA\xAA\xAA\xAA\xAA\xAA"
-      "\xAA\xAA\xAA\xAA" },
-    { "\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F\x10"
-      "\x11\x12\x13\x14\x15\x16\x17\x18\x19" },
-    { "\x0C\x0C\x0C\x0C\x0C\x0C\x0C\x0C\x0C\x0C\x0C\x0C\x0C\x0C\x0C\x0C"
-      "\x0C\x0C\x0C\x0C" },
-    { "" }, /* 0xAA 80 times */
-    { "" }
-};
-
-static const int sha1_hmac_test_keylen[7] =
-{
-    20, 4, 20, 25, 20, 80, 80
-};
-
-static unsigned char sha1_hmac_test_buf[7][74] =
-{
-    { "Hi There" },
-    { "what do ya want for nothing?" },
-    { "\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD"
-      "\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD"
-      "\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD"
-      "\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD"
-      "\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD" },
-    { "\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD"
-      "\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD"
-      "\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD"
-      "\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD"
-      "\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD" },
-    { "Test With Truncation" },
-    { "Test Using Larger Than Block-Size Key - Hash Key First" },
-    { "Test Using Larger Than Block-Size Key and Larger"
-      " Than One Block-Size Data" }
-};
-
-static const int sha1_hmac_test_buflen[7] =
-{
-    8, 28, 50, 50, 20, 54, 73
-};
-
-static const unsigned char sha1_hmac_test_sum[7][20] =
-{
-    { 0xB6, 0x17, 0x31, 0x86, 0x55, 0x05, 0x72, 0x64, 0xE2, 0x8B,
-      0xC0, 0xB6, 0xFB, 0x37, 0x8C, 0x8E, 0xF1, 0x46, 0xBE, 0x00 },
-    { 0xEF, 0xFC, 0xDF, 0x6A, 0xE5, 0xEB, 0x2F, 0xA2, 0xD2, 0x74,
-      0x16, 0xD5, 0xF1, 0x84, 0xDF, 0x9C, 0x25, 0x9A, 0x7C, 0x79 },
-    { 0x12, 0x5D, 0x73, 0x42, 0xB9, 0xAC, 0x11, 0xCD, 0x91, 0xA3,
-      0x9A, 0xF4, 0x8A, 0xA1, 0x7B, 0x4F, 0x63, 0xF1, 0x75, 0xD3 },
-    { 0x4C, 0x90, 0x07, 0xF4, 0x02, 0x62, 0x50, 0xC6, 0xBC, 0x84,
-      0x14, 0xF9, 0xBF, 0x50, 0xC8, 0x6C, 0x2D, 0x72, 0x35, 0xDA },
-    { 0x4C, 0x1A, 0x03, 0x42, 0x4B, 0x55, 0xE0, 0x7F, 0xE7, 0xF2,
-      0x7B, 0xE1 },
-    { 0xAA, 0x4A, 0xE5, 0xE1, 0x52, 0x72, 0xD0, 0x0E, 0x95, 0x70,
-      0x56, 0x37, 0xCE, 0x8A, 0x3B, 0x55, 0xED, 0x40, 0x21, 0x12 },
-    { 0xE8, 0xE9, 0x9D, 0x0F, 0x45, 0x23, 0x7D, 0x78, 0x6D, 0x6B,
-      0xBA, 0xA7, 0x96, 0x5C, 0x78, 0x08, 0xBB, 0xFF, 0x1A, 0x91 }
-};
-
-/*
  * Checkup routine
  */
-int sha1_self_test( int verbose )
+int mbedtls_sha1_self_test(int verbose)
 {
-    int i, j, buflen;
+    int i, j, buflen, ret = 0;
     unsigned char buf[1024];
     unsigned char sha1sum[20];
-    sha1_context ctx;
+    mbedtls_sha1_context ctx;
+
+    mbedtls_sha1_init(&ctx);
 
     /*
      * SHA-1
      */
-    for( i = 0; i < 3; i++ )
-    {
-        if( verbose != 0 )
-            printf( "  SHA-1 test #%d: ", i + 1 );
-
-        sha1_starts( &ctx );
-
-        if( i == 2 )
-        {
-            memset( buf, 'a', buflen = 1000 );
-
-            for( j = 0; j < 1000; j++ )
-                sha1_update( &ctx, buf, buflen );
-        }
-        else
-            sha1_update( &ctx, sha1_test_buf[i],
-                               sha1_test_buflen[i] );
-
-        sha1_finish( &ctx, sha1sum );
-
-        if( memcmp( sha1sum, sha1_test_sum[i], 20 ) != 0 )
-        {
-            if( verbose != 0 )
-                printf( "failed\n" );
-
-            return( 1 );
+    for (i = 0; i < 3; i++) {
+        if (verbose != 0) {
+            mbedtls_printf("  SHA-1 test #%d: ", i + 1);
         }
 
-        if( verbose != 0 )
-            printf( "passed\n" );
+        if ((ret = mbedtls_sha1_starts(&ctx)) != 0) {
+            goto fail;
+        }
+
+        if (i == 2) {
+            memset(buf, 'a', buflen = 1000);
+
+            for (j = 0; j < 1000; j++) {
+                ret = mbedtls_sha1_update(&ctx, buf, buflen);
+                if (ret != 0) {
+                    goto fail;
+                }
+            }
+        } else {
+            ret = mbedtls_sha1_update(&ctx, sha1_test_buf[i],
+                                      sha1_test_buflen[i]);
+            if (ret != 0) {
+                goto fail;
+            }
+        }
+
+        if ((ret = mbedtls_sha1_finish(&ctx, sha1sum)) != 0) {
+            goto fail;
+        }
+
+        if (memcmp(sha1sum, sha1_test_sum[i], 20) != 0) {
+            ret = 1;
+            goto fail;
+        }
+
+        if (verbose != 0) {
+            mbedtls_printf("passed\n");
+        }
     }
 
-    if( verbose != 0 )
-        printf( "\n" );
-
-    for( i = 0; i < 7; i++ )
-    {
-        if( verbose != 0 )
-            printf( "  HMAC-SHA-1 test #%d: ", i + 1 );
-
-        if( i == 5 || i == 6 )
-        {
-            memset( buf, '\xAA', buflen = 80 );
-            sha1_hmac_starts( &ctx, buf, buflen );
-        }
-        else
-            sha1_hmac_starts( &ctx, sha1_hmac_test_key[i],
-                                    sha1_hmac_test_keylen[i] );
-
-        sha1_hmac_update( &ctx, sha1_hmac_test_buf[i],
-                                sha1_hmac_test_buflen[i] );
-
-        sha1_hmac_finish( &ctx, sha1sum );
-
-        buflen = ( i == 4 ) ? 12 : 20;
-
-        if( memcmp( sha1sum, sha1_hmac_test_sum[i], buflen ) != 0 )
-        {
-            if( verbose != 0 )
-                printf( "failed\n" );
-
-            return( 1 );
-        }
-
-        if( verbose != 0 )
-            printf( "passed\n" );
+    if (verbose != 0) {
+        mbedtls_printf("\n");
     }
 
-    if( verbose != 0 )
-        printf( "\n" );
+    goto exit;
 
-    return( 0 );
+fail:
+    if (verbose != 0) {
+        mbedtls_printf("failed\n");
+    }
+
+exit:
+    mbedtls_sha1_free(&ctx);
+
+    return ret;
 }
 
-#endif
+#endif /* MBEDTLS_SELF_TEST */
 
-#endif
+#endif /* MBEDTLS_SHA1_C */

@@ -1,5 +1,7 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 #
+# Copyright The Mbed TLS Contributors
+# SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later
 
 use strict;
 
@@ -18,10 +20,10 @@ sub get_val($$)
         next if($line !~ /^# $str/);
         last;
     }
-        
+
     while(my $line = <TEST_DATA>)
     {
-        last if($line eq "\r\n"); 
+        last if($line eq "\r\n");
         $val .= $line;
     }
 
@@ -54,19 +56,19 @@ while (my $line = <TEST_DATA>)
         my $val_sig = get_val("Signature", "Sig");
 
         print("RSASSA-PSS Signature Example ${cnt}_${i}\n");
-        print("pkcs1_rsassa_pss_sign:$mod:16:\"$val_p\":16:\"$val_q\":16:\"$val_n\":16:\"$val_e\":SIG_RSA_SHA1:POLARSSL_MD_SHA1");
+        print("pkcs1_rsassa_pss_sign:$mod:16:\"$val_p\":16:\"$val_q\":16:\"$val_n\":16:\"$val_e\":SIG_RSA_SHA1:MBEDTLS_MD_SHA1");
         print(":\"$val_m\"");
         print(":\"$val_salt\"");
         print(":\"$val_sig\":0");
         print("\n\n");
 
         print("RSASSA-PSS Signature Example ${cnt}_${i} (verify)\n");
-        print("pkcs1_rsassa_pss_verify:$mod:16:\"$val_n\":16:\"$val_e\":SIG_RSA_SHA1:POLARSSL_MD_SHA1");
+        print("pkcs1_rsassa_pss_verify:$mod:16:\"$val_n\":16:\"$val_e\":SIG_RSA_SHA1:MBEDTLS_MD_SHA1");
         print(":\"$val_m\"");
         print(":\"$val_salt\"");
         print(":\"$val_sig\":0");
         print("\n\n");
-    } 
+    }
     $cnt++;
 }
 close(TEST_DATA);

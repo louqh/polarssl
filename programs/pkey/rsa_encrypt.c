@@ -1,163 +1,149 @@
 /*
  *  RSA simple data encryption program
  *
- *  Copyright (C) 2006-2011, Brainspark B.V.
- *
- *  This file is part of PolarSSL (http://www.polarssl.org)
- *  Lead Maintainer: Paul Bakker <polarssl_maintainer at polarssl.org>
- *
- *  All rights reserved.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ *  Copyright The Mbed TLS Contributors
+ *  SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later
  */
 
-#ifndef _CRT_SECURE_NO_DEPRECATE
-#define _CRT_SECURE_NO_DEPRECATE 1
-#endif
+#include "mbedtls/build_info.h"
+
+#include "mbedtls/platform.h"
+
+#if defined(MBEDTLS_BIGNUM_C) && defined(MBEDTLS_RSA_C) && \
+    defined(MBEDTLS_ENTROPY_C) && defined(MBEDTLS_FS_IO) && \
+    defined(MBEDTLS_CTR_DRBG_C)
+#include "mbedtls/rsa.h"
+#include "mbedtls/entropy.h"
+#include "mbedtls/ctr_drbg.h"
 
 #include <string.h>
-#include <stdio.h>
-
-#include "polarssl/config.h"
-
-#include "polarssl/rsa.h"
-#include "polarssl/entropy.h"
-#include "polarssl/ctr_drbg.h"
-
-#if !defined(POLARSSL_BIGNUM_C) || !defined(POLARSSL_RSA_C) ||  \
-    !defined(POLARSSL_ENTROPY_C) || !defined(POLARSSL_FS_IO) || \
-    !defined(POLARSSL_CTR_DRBG_C)
-int main( int argc, char *argv[] )
-{
-    ((void) argc);
-    ((void) argv);
-
-    printf("POLARSSL_BIGNUM_C and/or POLARSSL_RSA_C and/or "
-           "POLARSSL_ENTROPY_C and/or POLARSSL_FS_IO and/or "
-           "POLARSSL_CTR_DRBG_C not defined.\n");
-    return( 0 );
-}
-#else
-int main( int argc, char *argv[] )
-{
-    FILE *f;
-    int ret;
-    size_t i;
-    rsa_context rsa;
-    entropy_context entropy;
-    ctr_drbg_context ctr_drbg;
-    unsigned char input[1024];
-    unsigned char buf[512];
-    char *pers = "rsa_encrypt";
-
-    ret = 1;
-
-    if( argc != 2 )
-    {
-        printf( "usage: rsa_encrypt <string of max 100 characters>\n" );
-
-#if defined(_WIN32)
-        printf( "\n" );
 #endif
 
+#if !defined(MBEDTLS_BIGNUM_C) || !defined(MBEDTLS_RSA_C) ||  \
+    !defined(MBEDTLS_ENTROPY_C) || !defined(MBEDTLS_FS_IO) || \
+    !defined(MBEDTLS_CTR_DRBG_C)
+int main(void)
+{
+    mbedtls_printf("MBEDTLS_BIGNUM_C and/or MBEDTLS_RSA_C and/or "
+                   "MBEDTLS_ENTROPY_C and/or MBEDTLS_FS_IO and/or "
+                   "MBEDTLS_CTR_DRBG_C not defined.\n");
+    mbedtls_exit(0);
+}
+#else
+
+
+int main(int argc, char *argv[])
+{
+    FILE *f;
+    int ret = 1;
+    int exit_code = MBEDTLS_EXIT_FAILURE;
+    size_t i;
+    mbedtls_rsa_context rsa;
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context ctr_drbg;
+    unsigned char input[1024];
+    unsigned char buf[512];
+    const char *pers = "rsa_encrypt";
+    mbedtls_mpi N, E;
+
+    if (argc != 2) {
+        mbedtls_printf("usage: rsa_encrypt <string of max 100 characters>\n");
+
+#if defined(_WIN32)
+        mbedtls_printf("\n");
+#endif
+
+        mbedtls_exit(exit_code);
+    }
+
+    mbedtls_printf("\n  . Seeding the random number generator...");
+    fflush(stdout);
+
+    mbedtls_mpi_init(&N); mbedtls_mpi_init(&E);
+    mbedtls_rsa_init(&rsa);
+    mbedtls_ctr_drbg_init(&ctr_drbg);
+    mbedtls_entropy_init(&entropy);
+
+    ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func,
+                                &entropy, (const unsigned char *) pers,
+                                strlen(pers));
+    if (ret != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_ctr_drbg_seed returned %d\n",
+                       ret);
         goto exit;
     }
 
-    printf( "\n  . Seeding the random number generator..." );
-    fflush( stdout );
+    mbedtls_printf("\n  . Reading public key from rsa_pub.txt");
+    fflush(stdout);
 
-    entropy_init( &entropy );
-    if( ( ret = ctr_drbg_init( &ctr_drbg, entropy_func, &entropy,
-                               (unsigned char *) pers, strlen( pers ) ) ) != 0 )
-    {
-        printf( " failed\n  ! ctr_drbg_init returned %d\n", ret );
+    if ((f = fopen("rsa_pub.txt", "rb")) == NULL) {
+        mbedtls_printf(" failed\n  ! Could not open rsa_pub.txt\n" \
+                       "  ! Please run rsa_genkey first\n\n");
         goto exit;
     }
 
-    printf( "\n  . Reading public key from rsa_pub.txt" );
-    fflush( stdout );
+    if ((ret = mbedtls_mpi_read_file(&N, 16, f)) != 0 ||
+        (ret = mbedtls_mpi_read_file(&E, 16, f)) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_mpi_read_file returned %d\n\n",
+                       ret);
+        fclose(f);
+        goto exit;
+    }
+    fclose(f);
 
-    if( ( f = fopen( "rsa_pub.txt", "rb" ) ) == NULL )
-    {
-        ret = 1;
-        printf( " failed\n  ! Could not open rsa_pub.txt\n" \
-                "  ! Please run rsa_genkey first\n\n" );
+    if ((ret = mbedtls_rsa_import(&rsa, &N, NULL, NULL, NULL, &E)) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_rsa_import returned %d\n\n",
+                       ret);
         goto exit;
     }
 
-    rsa_init( &rsa, RSA_PKCS_V15, 0 );
-    
-    if( ( ret = mpi_read_file( &rsa.N, 16, f ) ) != 0 ||
-        ( ret = mpi_read_file( &rsa.E, 16, f ) ) != 0 )
-    {
-        printf( " failed\n  ! mpi_read_file returned %d\n\n", ret );
+    if (strlen(argv[1]) > 100) {
+        mbedtls_printf(" Input data larger than 100 characters.\n\n");
         goto exit;
     }
 
-    rsa.len = ( mpi_msb( &rsa.N ) + 7 ) >> 3;
-
-    fclose( f );
-
-    if( strlen( argv[1] ) > 100 )
-    {
-        printf( " Input data larger than 100 characters.\n\n" );
-        goto exit;
-    }
-
-    memcpy( input, argv[1], strlen( argv[1] ) );
+    memcpy(input, argv[1], strlen(argv[1]));
 
     /*
      * Calculate the RSA encryption of the hash.
      */
-    printf( "\n  . Generating the RSA encrypted value" );
-    fflush( stdout );
+    mbedtls_printf("\n  . Generating the RSA encrypted value");
+    fflush(stdout);
 
-    if( ( ret = rsa_pkcs1_encrypt( &rsa, ctr_drbg_random, &ctr_drbg,
-                                   RSA_PUBLIC, strlen( argv[1] ),
-                                   input, buf ) ) != 0 )
-    {
-        printf( " failed\n  ! rsa_pkcs1_encrypt returned %d\n\n", ret );
+    ret = mbedtls_rsa_pkcs1_encrypt(&rsa, mbedtls_ctr_drbg_random,
+                                    &ctr_drbg, strlen(argv[1]), input, buf);
+    if (ret != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_rsa_pkcs1_encrypt returned %d\n\n",
+                       ret);
         goto exit;
     }
 
     /*
      * Write the signature into result-enc.txt
      */
-    if( ( f = fopen( "result-enc.txt", "wb+" ) ) == NULL )
-    {
-        ret = 1;
-        printf( " failed\n  ! Could not create %s\n\n", "result-enc.txt" );
+    if ((f = fopen("result-enc.txt", "wb+")) == NULL) {
+        mbedtls_printf(" failed\n  ! Could not create %s\n\n", "result-enc.txt");
         goto exit;
     }
 
-    for( i = 0; i < rsa.len; i++ )
-        fprintf( f, "%02X%s", buf[i],
-                 ( i + 1 ) % 16 == 0 ? "\r\n" : " " );
+    for (i = 0; i < mbedtls_rsa_get_len(&rsa); i++) {
+        mbedtls_fprintf(f, "%02X%s", buf[i],
+                        (i + 1) % 16 == 0 ? "\r\n" : " ");
+    }
 
-    fclose( f );
+    fclose(f);
 
-    printf( "\n  . Done (created \"%s\")\n\n", "result-enc.txt" );
+    mbedtls_printf("\n  . Done (created \"%s\")\n\n", "result-enc.txt");
+
+    exit_code = MBEDTLS_EXIT_SUCCESS;
 
 exit:
+    mbedtls_mpi_free(&N); mbedtls_mpi_free(&E);
+    mbedtls_ctr_drbg_free(&ctr_drbg);
+    mbedtls_entropy_free(&entropy);
+    mbedtls_rsa_free(&rsa);
 
-#if defined(_WIN32)
-    printf( "  + Press Enter to exit this program.\n" );
-    fflush( stdout ); getchar();
-#endif
-
-    return( ret );
+    mbedtls_exit(exit_code);
 }
-#endif /* POLARSSL_BIGNUM_C && POLARSSL_RSA_C && POLARSSL_ENTROPY_C &&
-          POLARSSL_FS_IO && POLARSSL_CTR_DRBG_C */
+#endif /* MBEDTLS_BIGNUM_C && MBEDTLS_RSA_C && MBEDTLS_ENTROPY_C &&
+          MBEDTLS_FS_IO && MBEDTLS_CTR_DRBG_C */

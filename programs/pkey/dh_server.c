@@ -1,254 +1,258 @@
 /*
  *  Diffie-Hellman-Merkle key exchange (server side)
  *
- *  Copyright (C) 2006-2011, Brainspark B.V.
- *
- *  This file is part of PolarSSL (http://www.polarssl.org)
- *  Lead Maintainer: Paul Bakker <polarssl_maintainer at polarssl.org>
- *
- *  All rights reserved.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ *  Copyright The Mbed TLS Contributors
+ *  SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later
  */
 
-#ifndef _CRT_SECURE_NO_DEPRECATE
-#define _CRT_SECURE_NO_DEPRECATE 1
+#include "mbedtls/build_info.h"
+
+#include "mbedtls/platform.h"
+/* md.h is included this early since MD_CAN_XXX macros are defined there. */
+#include "mbedtls/md.h"
+
+#if defined(MBEDTLS_AES_C) && defined(MBEDTLS_DHM_C) && \
+    defined(MBEDTLS_ENTROPY_C) && defined(MBEDTLS_NET_C) && \
+    defined(MBEDTLS_RSA_C) && defined(MBEDTLS_SHA256_C) && \
+    defined(MBEDTLS_FS_IO) && defined(MBEDTLS_CTR_DRBG_C)
+#include "mbedtls/net_sockets.h"
+#include "mbedtls/aes.h"
+#include "mbedtls/dhm.h"
+#include "mbedtls/rsa.h"
+#include "mbedtls/sha256.h"
+#include "mbedtls/entropy.h"
+#include "mbedtls/ctr_drbg.h"
+
+#include <stdio.h>
+#include <string.h>
 #endif
 
-#include <string.h>
-#include <stdio.h>
-
-#include "polarssl/config.h"
-
-#include "polarssl/net.h"
-#include "polarssl/aes.h"
-#include "polarssl/dhm.h"
-#include "polarssl/rsa.h"
-#include "polarssl/sha1.h"
-#include "polarssl/entropy.h"
-#include "polarssl/ctr_drbg.h"
-
-#define SERVER_PORT 11999
+#define SERVER_PORT "11999"
 #define PLAINTEXT "==Hello there!=="
 
-#if !defined(POLARSSL_AES_C) || !defined(POLARSSL_DHM_C) ||     \
-    !defined(POLARSSL_ENTROPY_C) || !defined(POLARSSL_NET_C) ||  \
-    !defined(POLARSSL_RSA_C) || !defined(POLARSSL_SHA1_C) ||    \
-    !defined(POLARSSL_FS_IO) || !defined(POLARSSL_CTR_DRBG_C)
-int main( int argc, char *argv[] )
+#if !defined(MBEDTLS_AES_C) || !defined(MBEDTLS_DHM_C) ||     \
+    !defined(MBEDTLS_ENTROPY_C) || !defined(MBEDTLS_NET_C) ||  \
+    !defined(MBEDTLS_RSA_C) || !defined(MBEDTLS_SHA256_C) ||    \
+    !defined(MBEDTLS_FS_IO) || !defined(MBEDTLS_CTR_DRBG_C)
+int main(void)
 {
-    ((void) argc);
-    ((void) argv);
-
-    printf("POLARSSL_AES_C and/or POLARSSL_DHM_C and/or POLARSSL_ENTROPY_C "
-           "and/or POLARSSL_NET_C and/or POLARSSL_RSA_C and/or "
-           "POLARSSL_SHA1_C and/or POLARSSL_FS_IO and/or "
-           "POLARSSL_CTR_DBRG_C not defined.\n");
-    return( 0 );
+    mbedtls_printf("MBEDTLS_AES_C and/or MBEDTLS_DHM_C and/or MBEDTLS_ENTROPY_C "
+                   "and/or MBEDTLS_NET_C and/or MBEDTLS_RSA_C and/or "
+                   "MBEDTLS_MD_CAN_SHA256 and/or MBEDTLS_FS_IO and/or "
+                   "MBEDTLS_CTR_DRBG_C and/or MBEDTLS_SHA1_C not defined.\n");
+    mbedtls_exit(0);
 }
 #else
-int main( int argc, char *argv[] )
+
+
+int main(void)
 {
     FILE *f;
 
-    int ret;
+    int ret = 1;
+    int exit_code = MBEDTLS_EXIT_FAILURE;
+    unsigned int mdlen;
     size_t n, buflen;
-    int listen_fd = -1;
-    int client_fd = -1;
+    mbedtls_net_context listen_fd, client_fd;
 
     unsigned char buf[2048];
-    unsigned char hash[20];
+    unsigned char hash[MBEDTLS_MD_MAX_SIZE];
     unsigned char buf2[2];
-    char *pers = "dh_server";
+    const char *pers = "dh_server";
 
-    entropy_context entropy;
-    ctr_drbg_context ctr_drbg;
-    rsa_context rsa;
-    dhm_context dhm;
-    aes_context aes;
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context ctr_drbg;
+    mbedtls_rsa_context rsa;
+    mbedtls_dhm_context dhm;
+    mbedtls_aes_context aes;
 
-    ((void) argc);
-    ((void) argv);
+    mbedtls_mpi N, P, Q, D, E, dhm_P, dhm_G;
 
-    memset( &rsa, 0, sizeof( rsa ) );
-    memset( &dhm, 0, sizeof( dhm ) );
+    mbedtls_net_init(&listen_fd);
+    mbedtls_net_init(&client_fd);
+    mbedtls_dhm_init(&dhm);
+    mbedtls_aes_init(&aes);
+    mbedtls_ctr_drbg_init(&ctr_drbg);
 
+    mbedtls_mpi_init(&N); mbedtls_mpi_init(&P); mbedtls_mpi_init(&Q);
+    mbedtls_mpi_init(&D); mbedtls_mpi_init(&E); mbedtls_mpi_init(&dhm_P);
+    mbedtls_mpi_init(&dhm_G);
     /*
      * 1. Setup the RNG
      */
-    printf( "\n  . Seeding the random number generator" );
-    fflush( stdout );
+    mbedtls_printf("\n  . Seeding the random number generator");
+    fflush(stdout);
 
-    entropy_init( &entropy );
-    if( ( ret = ctr_drbg_init( &ctr_drbg, entropy_func, &entropy,
-                               (unsigned char *) pers, strlen( pers ) ) ) != 0 )
-    {
-        printf( " failed\n  ! ctr_drbg_init returned %d\n", ret );
+    mbedtls_entropy_init(&entropy);
+    if ((ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy,
+                                     (const unsigned char *) pers,
+                                     strlen(pers))) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_ctr_drbg_seed returned %d\n", ret);
         goto exit;
     }
 
     /*
      * 2a. Read the server's private RSA key
      */
-    printf( "\n  . Reading private key from rsa_priv.txt" );
-    fflush( stdout );
+    mbedtls_printf("\n  . Reading private key from rsa_priv.txt");
+    fflush(stdout);
 
-    if( ( f = fopen( "rsa_priv.txt", "rb" ) ) == NULL )
-    {
-        ret = 1;
-        printf( " failed\n  ! Could not open rsa_priv.txt\n" \
-                "  ! Please run rsa_genkey first\n\n" );
+    if ((f = fopen("rsa_priv.txt", "rb")) == NULL) {
+        mbedtls_printf(" failed\n  ! Could not open rsa_priv.txt\n" \
+                       "  ! Please run rsa_genkey first\n\n");
         goto exit;
     }
 
-    rsa_init( &rsa, RSA_PKCS_V15, 0 );
+    mbedtls_rsa_init(&rsa);
 
-    if( ( ret = mpi_read_file( &rsa.N , 16, f ) ) != 0 ||
-        ( ret = mpi_read_file( &rsa.E , 16, f ) ) != 0 ||
-        ( ret = mpi_read_file( &rsa.D , 16, f ) ) != 0 ||
-        ( ret = mpi_read_file( &rsa.P , 16, f ) ) != 0 ||
-        ( ret = mpi_read_file( &rsa.Q , 16, f ) ) != 0 ||
-        ( ret = mpi_read_file( &rsa.DP, 16, f ) ) != 0 ||
-        ( ret = mpi_read_file( &rsa.DQ, 16, f ) ) != 0 ||
-        ( ret = mpi_read_file( &rsa.QP, 16, f ) ) != 0 )
-    {
-        printf( " failed\n  ! mpi_read_file returned %d\n\n", ret );
+    if ((ret = mbedtls_mpi_read_file(&N, 16, f)) != 0 ||
+        (ret = mbedtls_mpi_read_file(&E, 16, f)) != 0 ||
+        (ret = mbedtls_mpi_read_file(&D, 16, f)) != 0 ||
+        (ret = mbedtls_mpi_read_file(&P, 16, f)) != 0 ||
+        (ret = mbedtls_mpi_read_file(&Q, 16, f)) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_mpi_read_file returned %d\n\n",
+                       ret);
+        fclose(f);
+        goto exit;
+    }
+    fclose(f);
+
+    if ((ret = mbedtls_rsa_import(&rsa, &N, &P, &Q, &D, &E)) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_rsa_import returned %d\n\n",
+                       ret);
         goto exit;
     }
 
-    rsa.len = ( mpi_msb( &rsa.N ) + 7 ) >> 3;
-    
-    fclose( f );
+    if ((ret = mbedtls_rsa_complete(&rsa)) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_rsa_complete returned %d\n\n",
+                       ret);
+        goto exit;
+    }
 
     /*
      * 2b. Get the DHM modulus and generator
      */
-    printf( "\n  . Reading DH parameters from dh_prime.txt" );
-    fflush( stdout );
+    mbedtls_printf("\n  . Reading DH parameters from dh_prime.txt");
+    fflush(stdout);
 
-    if( ( f = fopen( "dh_prime.txt", "rb" ) ) == NULL )
-    {
-        ret = 1;
-        printf( " failed\n  ! Could not open dh_prime.txt\n" \
-                "  ! Please run dh_genprime first\n\n" );
+    if ((f = fopen("dh_prime.txt", "rb")) == NULL) {
+        mbedtls_printf(" failed\n  ! Could not open dh_prime.txt\n" \
+                       "  ! Please run dh_genprime first\n\n");
         goto exit;
     }
 
-    if( mpi_read_file( &dhm.P, 16, f ) != 0 ||
-        mpi_read_file( &dhm.G, 16, f ) != 0 )
-    {
-        printf( " failed\n  ! Invalid DH parameter file\n\n" );
+    if ((ret = mbedtls_mpi_read_file(&dhm_P, 16, f)) != 0 ||
+        (ret = mbedtls_mpi_read_file(&dhm_G, 16, f)) != 0 ||
+        (ret = mbedtls_dhm_set_group(&dhm, &dhm_P, &dhm_G) != 0)) {
+        mbedtls_printf(" failed\n  ! Invalid DH parameter file\n\n");
+        fclose(f);
         goto exit;
     }
 
-    fclose( f );
+    fclose(f);
 
     /*
      * 3. Wait for a client to connect
      */
-    printf( "\n  . Waiting for a remote connection" );
-    fflush( stdout );
+    mbedtls_printf("\n  . Waiting for a remote connection");
+    fflush(stdout);
 
-    if( ( ret = net_bind( &listen_fd, NULL, SERVER_PORT ) ) != 0 )
-    {
-        printf( " failed\n  ! net_bind returned %d\n\n", ret );
+    if ((ret = mbedtls_net_bind(&listen_fd, NULL, SERVER_PORT, MBEDTLS_NET_PROTO_TCP)) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_net_bind returned %d\n\n", ret);
         goto exit;
     }
 
-    if( ( ret = net_accept( listen_fd, &client_fd, NULL ) ) != 0 )
-    {
-        printf( " failed\n  ! net_accept returned %d\n\n", ret );
+    if ((ret = mbedtls_net_accept(&listen_fd, &client_fd,
+                                  NULL, 0, NULL)) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_net_accept returned %d\n\n", ret);
         goto exit;
     }
 
     /*
      * 4. Setup the DH parameters (P,G,Ys)
      */
-    printf( "\n  . Sending the server's DH parameters" );
-    fflush( stdout );
+    mbedtls_printf("\n  . Sending the server's DH parameters");
+    fflush(stdout);
 
-    memset( buf, 0, sizeof( buf ) );
+    memset(buf, 0, sizeof(buf));
 
-    if( ( ret = dhm_make_params( &dhm, mpi_size( &dhm.P ), buf, &n,
-                                 ctr_drbg_random, &ctr_drbg ) ) != 0 )
-    {
-        printf( " failed\n  ! dhm_make_params returned %d\n\n", ret );
+    if ((ret =
+             mbedtls_dhm_make_params(&dhm, (int) mbedtls_dhm_get_len(&dhm), buf, &n,
+                                     mbedtls_ctr_drbg_random, &ctr_drbg)) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_dhm_make_params returned %d\n\n", ret);
         goto exit;
     }
 
     /*
      * 5. Sign the parameters and send them
      */
-    sha1( buf, n, hash );
 
-    buf[n    ] = (unsigned char)( rsa.len >> 8 );
-    buf[n + 1] = (unsigned char)( rsa.len      );
-
-    if( ( ret = rsa_pkcs1_sign( &rsa, NULL, NULL, RSA_PRIVATE, SIG_RSA_SHA1,
-                                0, hash, buf + n + 2 ) ) != 0 )
-    {
-        printf( " failed\n  ! rsa_pkcs1_sign returned %d\n\n", ret );
+    mdlen = (unsigned int) mbedtls_md_get_size(mbedtls_md_info_from_type(MBEDTLS_MD_SHA256));
+    if (mdlen == 0) {
+        mbedtls_printf(" failed\n  ! Invalid digest type\n\n");
         goto exit;
     }
 
-    buflen = n + 2 + rsa.len;
-    buf2[0] = (unsigned char)( buflen >> 8 );
-    buf2[1] = (unsigned char)( buflen      );
+    if ((ret = mbedtls_sha256(buf, n, hash, 0)) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_sha256 returned %d\n\n", ret);
+        goto exit;
+    }
 
-    if( ( ret = net_send( &client_fd, buf2, 2 ) ) != 2 ||
-        ( ret = net_send( &client_fd, buf, buflen ) ) != (int) buflen )
-    {
-        printf( " failed\n  ! net_send returned %d\n\n", ret );
+    const size_t rsa_key_len = mbedtls_rsa_get_len(&rsa);
+    buf[n] = (unsigned char) (rsa_key_len >> 8);
+    buf[n + 1] = (unsigned char) (rsa_key_len);
+
+    if ((ret = mbedtls_rsa_pkcs1_sign(&rsa, mbedtls_ctr_drbg_random, &ctr_drbg,
+                                      MBEDTLS_MD_SHA256, mdlen,
+                                      hash, buf + n + 2)) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_rsa_pkcs1_sign returned %d\n\n", ret);
+        goto exit;
+    }
+
+    buflen = n + 2 + rsa_key_len;
+    buf2[0] = (unsigned char) (buflen >> 8);
+    buf2[1] = (unsigned char) (buflen);
+
+    if ((ret = mbedtls_net_send(&client_fd, buf2, 2)) != 2 ||
+        (ret = mbedtls_net_send(&client_fd, buf, buflen)) != (int) buflen) {
+        mbedtls_printf(" failed\n  ! mbedtls_net_send returned %d\n\n", ret);
         goto exit;
     }
 
     /*
      * 6. Get the client's public value: Yc = G ^ Xc mod P
      */
-    printf( "\n  . Receiving the client's public value" );
-    fflush( stdout );
+    mbedtls_printf("\n  . Receiving the client's public value");
+    fflush(stdout);
 
-    memset( buf, 0, sizeof( buf ) );
-    n = dhm.len;
+    memset(buf, 0, sizeof(buf));
 
-    if( ( ret = net_recv( &client_fd, buf, n ) ) != (int) n )
-    {
-        printf( " failed\n  ! net_recv returned %d\n\n", ret );
+    n = mbedtls_dhm_get_len(&dhm);
+    if ((ret = mbedtls_net_recv(&client_fd, buf, n)) != (int) n) {
+        mbedtls_printf(" failed\n  ! mbedtls_net_recv returned %d\n\n", ret);
         goto exit;
     }
 
-    if( ( ret = dhm_read_public( &dhm, buf, dhm.len ) ) != 0 )
-    {
-        printf( " failed\n  ! dhm_read_public returned %d\n\n", ret );
+    if ((ret = mbedtls_dhm_read_public(&dhm, buf, n)) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_dhm_read_public returned %d\n\n", ret);
         goto exit;
     }
 
     /*
      * 7. Derive the shared secret: K = Ys ^ Xc mod P
      */
-    printf( "\n  . Shared secret: " );
-    fflush( stdout );
+    mbedtls_printf("\n  . Shared secret: ");
+    fflush(stdout);
 
-    if( ( ret = dhm_calc_secret( &dhm, buf, &n ) ) != 0 )
-    {
-        printf( " failed\n  ! dhm_calc_secret returned %d\n\n", ret );
+    if ((ret = mbedtls_dhm_calc_secret(&dhm, buf, sizeof(buf), &n,
+                                       mbedtls_ctr_drbg_random, &ctr_drbg)) != 0) {
+        mbedtls_printf(" failed\n  ! mbedtls_dhm_calc_secret returned %d\n\n", ret);
         goto exit;
     }
 
-    for( n = 0; n < 16; n++ )
-        printf( "%02x", buf[n] );
+    for (n = 0; n < 16; n++) {
+        mbedtls_printf("%02x", buf[n]);
+    }
 
     /*
      * 8. Setup the AES-256 encryption key
@@ -258,34 +262,45 @@ int main( int argc, char *argv[] )
      * the keying material for the encryption/decryption keys
      * and MACs.
      */
-    printf( "...\n  . Encrypting and sending the ciphertext" );
-    fflush( stdout );
+    mbedtls_printf("...\n  . Encrypting and sending the ciphertext");
+    fflush(stdout);
 
-    aes_setkey_enc( &aes, buf, 256 );
-    memcpy( buf, PLAINTEXT, 16 );
-    aes_crypt_ecb( &aes, AES_ENCRYPT, buf, buf );
-
-    if( ( ret = net_send( &client_fd, buf, 16 ) ) != 16 )
-    {
-        printf( " failed\n  ! net_send returned %d\n\n", ret );
+    ret = mbedtls_aes_setkey_enc(&aes, buf, 256);
+    if (ret != 0) {
+        goto exit;
+    }
+    memcpy(buf, PLAINTEXT, 16);
+    ret = mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_ENCRYPT, buf, buf);
+    if (ret != 0) {
         goto exit;
     }
 
-    printf( "\n\n" );
+    if ((ret = mbedtls_net_send(&client_fd, buf, 16)) != 16) {
+        mbedtls_printf(" failed\n  ! mbedtls_net_send returned %d\n\n", ret);
+        goto exit;
+    }
+
+    mbedtls_printf("\n\n");
+
+    exit_code = MBEDTLS_EXIT_SUCCESS;
 
 exit:
 
-    net_close( client_fd );
-    rsa_free( &rsa );
-    dhm_free( &dhm );
+    mbedtls_mpi_free(&N); mbedtls_mpi_free(&P); mbedtls_mpi_free(&Q);
+    mbedtls_mpi_free(&D); mbedtls_mpi_free(&E); mbedtls_mpi_free(&dhm_P);
+    mbedtls_mpi_free(&dhm_G);
 
-#if defined(_WIN32)
-    printf( "  + Press Enter to exit this program.\n" );
-    fflush( stdout ); getchar();
-#endif
+    mbedtls_net_free(&client_fd);
+    mbedtls_net_free(&listen_fd);
 
-    return( ret );
+    mbedtls_aes_free(&aes);
+    mbedtls_rsa_free(&rsa);
+    mbedtls_dhm_free(&dhm);
+    mbedtls_ctr_drbg_free(&ctr_drbg);
+    mbedtls_entropy_free(&entropy);
+
+    mbedtls_exit(exit_code);
 }
-#endif /* POLARSSL_AES_C && POLARSSL_DHM_C && POLARSSL_ENTROPY_C &&
-          POLARSSL_NET_C && POLARSSL_RSA_C && POLARSSL_SHA1_C &&
-          POLARSSL_FS_IO && POLARSSL_CTR_DRBG_C */
+#endif /* MBEDTLS_AES_C && MBEDTLS_DHM_C && MBEDTLS_ENTROPY_C &&
+          MBEDTLS_NET_C && MBEDTLS_RSA_C && MBEDTLS_MD_CAN_SHA256 &&
+          MBEDTLS_FS_IO && MBEDTLS_CTR_DRBG_C */
